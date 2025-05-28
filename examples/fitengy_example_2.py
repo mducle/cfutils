@@ -5,7 +5,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import sys, os
 sys.path.append(os.path.dirname(__file__))
-from cef_fitengy import fitengy
+from cef_utils import fitengy
 
 from CrystalField import CrystalField, CrystalFieldFit, Background, Function
 import mslice.cli as mc

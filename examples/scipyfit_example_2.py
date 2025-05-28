@@ -12,10 +12,8 @@ from pychop.Instruments import Instrument
 
 sys.path.append(os.path.dirname(__file__))
 import importlib
-import cef_fitengy
-importlib.reload(cef_fitengy)
-import fit_scipy
-importlib.reload(fit_scipy)
+import cef_utils
+importlib.reload(cef_utils)
 
 np.set_printoptions(linewidth=200, precision=8, floatmode='fixed')
 
@@ -58,15 +56,15 @@ mari.setEi(100.)
 resmod3 = ResolutionModel(mari.getResolution, xstart=-50, xend=99.9, accuracy=0.01)
 resmods = [resmod1, resmod2, resmod3]
  
-importlib.reload(cef_fitengy)
+importlib.reload(cef_utils)
 
-#res = fit_scipy.fit_en(fit, [1.3, 2.3, 8.1, 10.2, 20, 36], 
+#res = cef_utils.fit_en(fit, [1.3, 2.3, 8.1, 10.2, 20, 36], 
 #    fit_alg='local', method='Nelder-Mead', jac='3-point', options={'maxiter':500},#, 'samples':10},
 #    widths_kwargs={'maxfwhm':[0.5, 3.0, 10.0], 'method':'trust-constr', 'jac':'3-point', 'options':{'maxiter':200}})
 
 # Refine the energies a bit before fitting spectra
 #print('------- Fitting energy guesses ------')
-#Blm_en = cef_fitengy.fitengy(Ion='Pr', E=[0, 1.3, 1.3, 2.3, 8.1, 8.1, 10.2, 20, 26], sym='C4v')
+#Blm_en = cef_utils.fitengy(Ion='Pr', E=[0, 1.3, 1.3, 2.3, 8.1, 8.1, 10.2, 20, 26], sym='C4v')
 #print(Blm_en)
 
 #cf = CrystalField('Pr', 'C4v', Temperature=0.1, **Blm_en)
@@ -92,17 +90,17 @@ fit = CrystalFieldFit(Model=cf, InputWorkspace=[Ei23_7K_cut, Ei10_7K_cut, Ei100_
 
 e0 = [0, 0, 1.3, 2.3, 8.1, 10.2, 20, 26]
 
-# importlib.reload(fit_scipy)
-# #c2 = fit_scipy.fit_widths(fit, maxfwhm=maxFWHMs, method='L-BFGS-B', jac='3-point', options={'maxiter':200})
-# c2 = fit_scipy.fit_widths(fit, maxfwhm=maxFWHMs, method='Nelder-Mead', options={'maxiter':200})
-# #c2 = fit_scipy.fit_widths(fit, maxfwhm=maxFWHMs, method='trust-constr', jac='3-point', options={'maxiter':200})
+# importlib.reload(cef_utils)
+# #c2 = cef_utils.fit_widths(fit, maxfwhm=maxFWHMs, method='L-BFGS-B', jac='3-point', options={'maxiter':200})
+# c2 = cef_utils.fit_widths(fit, maxfwhm=maxFWHMs, method='Nelder-Mead', options={'maxiter':200})
+# #c2 = cef_utils.fit_widths(fit, maxfwhm=maxFWHMs, method='trust-constr', jac='3-point', options={'maxiter':200})
 # fit.fit()
 
-# importlib.reload(fit_scipy)
-# res = fit_scipy.fit_cef(fit, method='SLSQP', jac='3-point', options={'maxiter':600},
+# importlib.reload(cef_utils)
+# res = cef_utils.fit_cef(fit, method='SLSQP', jac='3-point', options={'maxiter':600},
 #     widths_kwargs={'maxfwhm':maxFWHMs, 'method':'trust-constr', 'jac':'3-point', 'options':{'maxiter':200}})
 
-# res = fit_scipy.fit_en(fit, e0, 
+# res = cef_utils.fit_en(fit, e0, 
 #    fit_alg='local', method='Nelder-Mead', jac='3-point', options={'maxiter':500},
 #    widths_kwargs={'maxfwhm':maxFWHMs, 'method':'trust-constr', 'jac':'3-point', 'options':{'maxiter':200}})
 
@@ -115,7 +113,7 @@ globalg = 'differential_evolution'
 #globalg = 'direct'
 
 if do_global:
-    res = fit_scipy.fit_en(fit, e0, is_voigt=True,
+    res = cef_utils.fit_en(fit, e0, is_voigt=True,
         fit_alg='global', algorithm=globalg, #fit_alg='gofit', options={'maxiter':100, 'samples':10},
         widths_kwargs={'maxfwhm':maxFWHMs, 'method':'trust-constr', 'jac':'3-point', 'options':{'maxiter':10}})
     print(res)
@@ -139,18 +137,18 @@ if 1:#False:
     
     fit = CrystalFieldFit(Model=cf, InputWorkspace=[Ei23_7K_cut, Ei10_7K_cut, Ei100_7K_cut, Ei100_20K_cut],
                           MaxIterations=0, Output='fit')
-    chi2bp = fit_scipy.fit_en(fit, e0, eval_only=bp, widths_kwargs={'maxfwhm':maxFWHMs, 'method':'trust-constr', 'jac':'3-point', 'options':{'maxiter':200}},
+    chi2bp = cef_utils.fit_en(fit, e0, eval_only=bp, widths_kwargs={'maxfwhm':maxFWHMs, 'method':'trust-constr', 'jac':'3-point', 'options':{'maxiter':200}},
                 is_voigt=True)
     #try:
     #    fit.fit()
     #except:
     #    pass
     print(chi2bp)
-    #fit_scipy.genpp(fit)
+    #cef_utils.genpp(fit)
 
 localg = 'COBYLA'#'trust-constr'#'CG'#'BFGS'#'Powell'#'Nelder-Mead'
 localg = 'Nelder-Mead'#'SLSQP'#'TNC'
-res = fit_scipy.fit_en(fit, e0, is_voigt=True,
+res = cef_utils.fit_en(fit, e0, is_voigt=True,
    fit_alg='local', method=localg, jac='3-point', options={'maxiter':10},
    widths_kwargs={'maxfwhm':maxFWHMs, 'method':'trust-constr', 'jac':'3-point', 'options':{'maxiter':200}})
 print(res)
@@ -158,8 +156,8 @@ print(res.x.tolist())
 bp = np.squeeze(mtd['bestpars'].extractY())
 
 print(bp.tolist()) if hasattr(bp, 'tolist') else print(bp)
-fit_scipy.printpars(fit)
+cef_utils.printpars(fit)
 print(r5(fit.model.getEigenvalues()))
 print(fit.model.getPeakList())
 
-fit_scipy.genpp(fit)
+cef_utils.genpp(fit)

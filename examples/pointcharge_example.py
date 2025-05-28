@@ -8,12 +8,9 @@ from CrystalField import CrystalField, PointCharge, ResolutionModel, CrystalFiel
 from pychop.Instruments import Instrument
 
 sys.path.insert(0, os.path.dirname(__file__))
-#from cef_fitengy import fitengy
 import importlib
-import cef_fitengy
-importlib.reload(cef_fitengy)
-import fit_scipy
-importlib.reload(fit_scipy)
+import cef_utils
+importlib.reload(cef_utils)
 
 np.set_printoptions(linewidth=200, precision=3, suppress=True)
 
@@ -134,10 +131,9 @@ blm2 = cif_pc_model.calculate()
 #                       MaxIterations=0, Output='fit')
 # import sys
 # sys.path.append(os.path.dirname(__file__))
-# import cef_fitengy
-# import fit_scipy
+# import cef_utils
 # 
-# fit_scipy.printpars(fit)
+# cef_utils.printpars(fit)
 
 FWHMs = [np.interp(0, *resmods[irm].model)*1.5 for irm in [0,2,3]]
 cf1 = CrystalField('Tb', 'C2', Temperature=[7]*3, FWHM=FWHMs, **blm1)

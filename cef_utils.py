@@ -1,20 +1,187 @@
+import mantid
+from mantid.simpleapi import *
+import matplotlib.pyplot as plt
 import numpy as np
+import copy
+import warnings
 import scipy.optimize
 import re
-import copy
-
-import mantid
+from CrystalField.energies import _unpack_complex_matrix
 from CrystalField import CrystalField
-from CrystalField.normalisation import split2range
+from CrystalField.normalisation import split2range, _get_normalisation, ionname2Nre
+from CrystalField.fitting import getSymmAllowedParam
 
 import sys, os
 sys.path.append(os.path.dirname(__file__))
-from cef_fitengy import fitengy
 
 try:
     import gofit
 except ModuleNotFoundError:
     gofit = None
+
+def CFEnergy(nre, **kwargs):
+    cfe = AlgorithmManager.create('CrystalFieldEnergies')
+    cfe.initialize()
+    cfe.setChild(True)
+    cfe.setProperty('nre', nre)
+    for k, v in kwargs.items():
+        cfe.setProperty(k, v)
+    cfe.execute()
+
+    # Unpack the results
+    eigenvalues = cfe.getProperty('Energies').value
+    dim = len(eigenvalues)
+    eigenvectors = _unpack_complex_matrix(cfe.getProperty('Eigenvectors').value, dim, dim)
+    hamiltonian = _unpack_complex_matrix(cfe.getProperty('Hamiltonian').value, dim, dim)
+
+    return eigenvalues, eigenvectors, hamiltonian
+
+def fitengy(**kwargs):
+    """ Uses the Newman-Ng algorithm to fit a set of crystal field parameters to a level scheme.
+
+        blm = fitengy(Ion=ionname, sym=point_group, E=evec)
+        blm = fitengy(Ion=ionname, E=evec, B=bvec)
+        blm = fitengy(Ion=ionname, E=evec, B20=initB20, B40=initB40, ...)
+        [B20, B40] = fitengy(IonNum=ionnumber, E=evec, B20=initB20, B40=initB40, OutputTuple=True)
+        
+        Note: This function only accepts keyword inputs.
+        
+        Inputs:
+            ionname - name of the (tripositive) rare earth ion, e.g. 'Ce', 'Pr'.
+            ionnumber - the number index of the rare earth ion: 
+                   1=Ce 2=Pr 3=Nd 4=Pm 5=Sm 6=Eu 7=Gd 8=Tb 9=Dy 10=Ho 11=Er 12=Tm 13=Yb
+            sym - a string with the Schoenflies symbol of the point group of the rare earth site
+                   If bvec and sym are both given, bvec will take precedence (sym will be ignored)
+            evec - a vector of the energy values to be fitted. Must equal 2J+1 for the selected ion.
+            bvec - a vector of initial CF parameters in order: [B20 B21 B22 B40 B41 ... etc.]
+                    zero values will not be fitted.
+                    This vector can also a be dictionary instead {'B20':1, 'B40':2}
+                    If no parameters are given but the symmetry is given random initial parameters
+                    will be used, depending on the symmetry.
+            B20 etc. - initial values of the CF parameters to be fitted. 
+
+        Outputs:
+            blm - a dictionary of the output crystal field parameters (default)
+            [B20, etc] - a tuple of the output crystal field parameters (need to set OutputTuple flag)
+    """
+
+    # Some Error checking
+    if 'Ion' not in kwargs.keys() and 'IonNum' not in kwargs.keys():
+        raise NameError('You must specify the ion using either the ''Ion'' or ''IonNum'' keywords')
+    if 'E' not in kwargs.keys():
+        raise NameError('Input energy level scheme must be supplied as the ''E'' keyword input')
+    E0 = np.array(sorted(kwargs['E']))# - np.mean(kwargs['E']))
+
+    # Some definitions
+    Blms = ['B20', 'B21', 'B22', 'B40', 'B41', 'B42', 'B43', 'B44', 'B60', 'B61', 'B62', 'B63', 'B64', 'B65', 'B66',
+            'IB20', 'IB21', 'IB22', 'IB40', 'IB41', 'IB42', 'IB43', 'IB44', 'IB60', 'IB61', 'IB62', 'IB63', 'IB64', 'IB65', 'IB66']
+    Ions = ['Ce', 'Pr', 'Nd', 'Pm', 'Sm', 'Eu', 'Gd', 'Tb', 'Dy', 'Ho', 'Er', 'Tm', 'Yb']
+
+    if 'B' in kwargs.keys():
+        bvec = kwargs.pop('B')
+        if isinstance(bvec, dict):
+            kwargs.update(bvec)
+        else:
+            for ii in range(len(bvec)):
+                kwargs[Blms[ii]] = bvec[ii]
+
+    if 'Ion' in kwargs.keys():
+        nre = [ id for id,val in enumerate(Ions) if val==kwargs['Ion'] ][0] + 1
+    else:
+        nre = kwargs['IonNum']
+
+    Jvals = [0, 5.0 / 2, 4, 9.0 / 2, 4, 5.0 / 2, 0, 7.0 / 2, 6, 15.0 / 2, 8, 15.0 / 2, 6, 7.0 / 2]
+    J = Jvals[nre]
+    #if len(E0) != int(2*J+1):
+    #    raise RuntimeError(f'Expected {2*J+1} levels for Ion {Ions[nre]} but only got {len(E0)} elements in E0')
+
+    if 'sym' in kwargs and len(set(kwargs.keys()).intersection(set(Blms))) == 0:
+        # No parameters given, estimate using Monte Carlo sampling
+        nz_pars = getSymmAllowedParam(kwargs['sym'])
+        if J < 3:
+            nz_pars = [v for v in nz_pars if 'B6' not in v]
+        ebw = np.max(E0) - np.min(E0)
+        ranges = split2range(Ion=Ions[nre], EnergySplitting=ebw, Parameters=nz_pars)
+        # Estimate initial parameters using a Monte Carlo method
+        kwargs.update({p:(np.random.rand()-0.5)*ranges[p.replace('I','')] for p in nz_pars})
+        kwargs['is_cubic'] = kwargs['sym'] in ['T', 'Td', 'Th', 'O', 'Oh']
+
+    iscubic = kwargs.pop('iscubic', False)
+    if iscubic:
+        if 'B40' not in kwargs.keys() or 'B60' not in kwargs.keys():
+            pass
+        else:
+            if 'B44' not in kwargs.keys():
+                kwargs['B44'] = 5 * kwargs['B40']
+            if 'B64' not in kwargs.keys():
+                kwargs['B44'] = -21 * kwargs['B60']
+
+    fitparind = []
+    initBlm = {}
+    for ind in range(len(Blms)):
+        if Blms[ind] in kwargs.keys():
+            fitparind.append(ind)
+            initBlm[Blms[ind]] = kwargs[Blms[ind]]
+
+    if not fitparind:
+        raise NameError('You must specify at least one input Blm parameter')
+
+    # Calculates the matrix elements <n|O_k^q|m>
+    Omat = {}
+    denom = {}
+    for ind in fitparind:
+        bdict = {Blms[ind]: 1}
+        ee, vv, ham = CFEnergy(nre, **bdict)
+        Omat[Blms[ind]] = np.asmatrix(ham)
+        denom[Blms[ind]] = np.trace( np.real( (Omat[Blms[ind]].H) * Omat[Blms[ind]] ))
+
+    Ecalc, vv, ham = CFEnergy(nre, **initBlm)
+    if len(E0) < len(Ecalc):
+        #E = list(sorted(kwargs['E'])) + list(Ecalc[-(len(Ecalc)-len(E0)):]*(0.13*((100-num_iter)/100)+1) )
+        # For each desired level, find nearest calculated level and substitute it for that
+        Eref, Enear = (Ecalc, [])
+        E = copy.deepcopy(Ecalc)
+        for en in E0:
+            Idif = np.argmin(np.abs(Eref - en))
+            Enear.append(Eref[Idif])
+            E[np.argmin(np.abs(Ecalc - Eref[Idif]))] = en
+            Eref = np.delete(Eref, Idif)
+        E0 = E - np.mean(E)
+    else:
+        E0 = E0 - np.mean(E0)
+
+    lsqfit = 0
+    Blm = initBlm
+    div_count = 0
+    for num_iter in range(100):
+        if iscubic:
+            Blm['B44'] = 5 * Blm['B40']
+            Blm['B64'] = -21 * Blm['B60']
+        Ecalc, vv, ham = CFEnergy(nre, **Blm)
+        V = np.asmatrix(vv)
+        Ecalc = Ecalc - np.mean(Ecalc)
+        newlsqfit = np.sum(np.power(Ecalc-E0,2))
+        if np.fabs(lsqfit - newlsqfit)<1.e-7:
+            break
+        if newlsqfit > lsqfit:
+            div_count += 1
+        if div_count > 10:
+            warnings.warn('Fit is diverging')
+            break
+        lsqfit = newlsqfit
+        for ind in fitparind:
+            # Calculates the numerator = sum_n En <j|Okq|i>_nn
+            numer = np.dot( np.real( np.diag( V.H * Omat[Blms[ind]] * V ) ), E0 )
+            # Calculates the new Blm parameter
+            Blm[Blms[ind]] = numer / denom[Blms[ind]]
+
+    if 'OutputTuple' in kwargs.keys() and kwargs['OutputTuple']:
+        retval = []
+        for ind in fitparind:
+            retval.append(Blm[Blms[ind]])
+        return tuple(retval)
+    else:
+        return Blm
 
 BLMS = ['B20', 'B21', 'B22', 'B40', 'B41', 'B42', 'B43', 'B44', 'B60', 'B61', 'B62', 'B63', 'B64', 'B65', 'B66',
         'IB21', 'IB22', 'IB41', 'IB42', 'IB43', 'IB44', 'IB61', 'IB62', 'IB63', 'IB64', 'IB65', 'IB66']
@@ -40,7 +207,7 @@ class CEFData:
             self.data = [self.get_data_from_workspace(ws) for ws in InputWorkspace]
         else:
             self.nset = 1
-            self.data = [self.get_data_from_workspace(ws)]
+            self.data = [self.get_data_from_workspace(InputWorkspace)]
 
     def xye(self, index=0):
         return self.data[index][0], self.data[index][1], self.data[index][2]
@@ -125,7 +292,7 @@ def parse_cef_func(func, is_voigt=False):
     for ii, ss in enumerate(sites):
         blms.append({pn:cffun[f'{ss}{pn}'] for pn in BLMS if f'{ss}{pn}=' in fstr})
         # Overwrite values with ties if they exists
-        blms[-1].update({pn:float(re.search(f'{ss}{pn}=([\-0-9\.e]*)', ties).group(1)) for pn in BLMS if f'{ss}{pn}=' in ties})
+        blms[-1].update({pn:float(re.search(f'{ss}{pn}=([\-0-9\.e]*)', ties).group(1)) for pn in BLMS if f',{ss}{pn}=' in ties})
         cfob.append([])
         pks.append([])
         for jj, sp in enumerate(specs):
@@ -270,34 +437,40 @@ def fit_widths(fitobj, retres=False, is_voigt=False, **kwargs):
 def fit_cef(fitobj, **kwargs):
     cfpars, cfobjs, peaks, intscal, origwidths = parse_cef_func(fitobj.model.function)
     p0, pnam, bnd = ([], [], [])
+    norm = []
     if len(cfpars) > 1:
         for ii in range(len(cfpars)):
-            ranges = split2range(Ion=cfobjs[ii][0].Ion, EnergySplitting=np.max(cfobjs[ii][0].getPeakList()[0]), Parameters=list(cfpars[ii].keys()))
+            #ranges = split2range(Ion=cfobjs[ii][0].Ion, EnergySplitting=np.max(cfobjs[ii][0].getPeakList()[0]), Parameters=list(cfpars[ii].keys()))
+            nre = ionname2Nre(cfobjs[ii][0].Ion)
+            norm0 = _get_normalisation(nre, bnames=list(cfpars[ii].keys()))
+            energy_splitting = np.max(cfobjs[ii][0].getPeakList()[0])
+            ee = CFEnergy(nre, **cfpars[ii])[0]
             for ky, vl in cfpars[ii].items():
                 if abs(vl) > 0:
-                    p0.append(vl)
+                    p0.append(vl * norm0[ky])  # stev2norm
                     pnam.append(f'ion{ii}.{ky}')
-                    bv = ranges[ky.replace('I','')]
-                    if abs(vl) > bv:
-                        bv = abs(vl) * 3
+                    norm[f'ion{ii}.{ky}'] = norm0[ky]
+                    bv = 2 * energy_splitting / (np.max(ee) - np.min(ee))
                     bnd.append((-bv, bv))
     else:
-        ranges = split2range(Ion=cfobjs[0][0].Ion, EnergySplitting=np.max(cfobjs[0][0].getPeakList()[0]), Parameters=list(cfpars[0].keys()))
+        nre = ionname2Nre(cfobjs[0][0].Ion)
+        norm = _get_normalisation(nre, bnames=list(cfpars[0].keys()))
+        energy_splitting = np.max(cfobjs[0][0].getPeakList()[0])
+        ee = CFEnergy(nre, **cfpars[0])[0]
         for ky, vl in cfpars[0].items():
             if abs(vl) > 0:
-                p0.append(vl)
+                p0.append(vl * norm[ky])  # stev2norm
                 pnam.append(ky)
-                bv = ranges[ky.replace('I','')]
-                if abs(vl) > bv:
-                    bv = abs(vl) * 3
+                bv = 2 * energy_splitting / (np.max(ee) - np.min(ee))
                 bnd.append((-bv, bv))
     widths_kw = kwargs.pop('widths_kwargs', kwargs)
     chi2v = []
     def minfun(p):
         for ky, vl in zip(pnam, p):
-            fitobj.model[ky] = vl
+            fitobj.model[ky] = 0 if norm[ky] == 0 else vl / norm[ky]  # norm2stev
         for ky, vl in origwidths.items():
             fitobj.model[ky] = vl
+        #print(fitobj.model.getEigenvalues())
         chi2 = fit_widths(fitobj, **widths_kw)
         if len(chi2v) > 2 and chi2 < np.min(chi2v):
             mantid.simpleapi.CreateWorkspace(range(len(p)), p, OutputWorkspace='bestpars')
@@ -536,49 +709,3 @@ def printpars(fitobj):
         for bln in BLMS:
             if bln in cfpars[0] and abs(cfpars[0][bln]) > 1e-6:
                 print(f'{bln} = {cfpars[0][bln]:0.5g}')
-
-
-# def fit_widths(fitobj, **kwargs):
-#     cfpars, cfobjs, peaks, intscal = parse_cef_func(fitobj.model.function)
-#     if hasattr(fitobj.model, '_background') and fitobj.model.background is not None:
-#         try:
-#             bkg = Model.background.background.function.getParameterValue('f0.A0')
-#         except:
-#             bkg = 0.0
-#     if fitobj.model.PeakShape == 'Lorentzian':
-#         peakfun = lorz
-#     elif fitobj.model.PeakShape == 'Gaussian':
-#         peakfun = gauss
-#         fac = np.sqrt(4 * np.log(2)) / np.pi
-#     else:
-#         raise RuntimeError('Only Lorentzian or Gaussian peak shapes are supported')
-#     def minfun(pkl, pp, x, y, e):
-#         npk = pkl.shape[1]
-#         yf = np.zeros(len(x))
-#         #assert len(pp) == (npk + 2), "Error: length of widths input is not consistent with peak list"
-#         for ii in range(npk):
-#             yf += peakfun(x, pkl[0, ii], pkl[1, ii], pp[ii])
-#         yf = yf * pp[-2] + pp[-1]
-#         return np.sum((y - yf)**2 / (e**2))
-#     peaklist, p0, pnam = get_peaklist_from_dic(peaks, intscal, bkg)
-#     data = CEFData(fitobj._input_workspace)
-#     assert data.nset == len(p0), "Incorrect number of datasets compared to model"
-#     chi2 = 0.0
-#     maxfwhm = kwargs.pop('maxfwhm', [-1]*data.nset)
-#     for ii in range(data.nset):
-#         bnd = [(0.2*pv, maxfwhm[ii] if maxfwhm[ii] > 0 else 3*pv) for pv in p0[ii]]
-#         res = scipy.optimize.minimize(lambda p: minfun(peaklist[ii], p, *data.xye(ii)), p0[ii], bounds=bnd, **kwargs)
-#         #if not res.success:
-#         #    raise RuntimeError(f'Fitting widths failed with error: "{res.message}"')
-#         chi2 += minfun(peaklist[ii], res.x, *data.xye())
-#         print(res)
-#         print(res.x)
-#         # Updates the fit model
-#         if fitobj.model.PeakShape == 'Lorentzian':
-#             for jj, pkn in enumerate(pnam[ii]):
-#                 fitobj.model[f'{pkn}.FWHM'] = res.x[jj]
-#         else:
-#             for jj, pkn in enumerate(pnam[ii]):
-#                 fitobj.model[f'{pkn}.Sigma'] = res.x[jj] / SIGMAFAC
-#                 fitobj.model[f'{pkn}.PeakHeight'] = (area / res.x[jj] * fac)
-#     return chi2
