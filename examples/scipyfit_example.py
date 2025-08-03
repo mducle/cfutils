@@ -1,3 +1,9 @@
+"""
+Example of using new fitting algorithm that matches the energy levels at each iteration
+The system is SrTb2O4, published in Orlandi et al., Phys. Rev. B 111 054415 (2025)
+https://doi.org/10.1103/PhysRevB.111.054415
+"""
+
 # import mantid algorithms, numpy and matplotlib
 from mantid.simpleapi import *
 import matplotlib.pyplot as plt
@@ -10,7 +16,7 @@ from CrystalField import CrystalField, PointCharge, ResolutionModel, CrystalFiel
 from CrystalField.energies import energies
 from pychop.Instruments import Instrument
 
-sys.path.append(os.path.dirname(__file__))
+sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 import importlib
 import cef_utils
 importlib.reload(cef_utils)
@@ -23,7 +29,7 @@ np.set_printoptions(linewidth=200)
 #    SrHo2O4: Ho_4c1: 0, 0.8, 2, 3.5, 6, 11, 41, 42; Ho_4c2: 0, 12, 13, 16, 17, 40, 41
 
 # Conversion factor from Wybourne to Stevens normalisation
-from scipy import sqrt
+from math import sqrt
 lambdakq = {'IB22':sqrt(6.)/2., 'IB21':sqrt(6.), 'B20':1./2., 'B21':sqrt(6.), 'B22':sqrt(6.)/2.,
      'IB44':sqrt(70.)/8., 'IB43':sqrt(35.)/2., 'IB42':sqrt(10.)/4., 'IB41':sqrt(5.)/2., 'B40':1./8., 'B41':sqrt(5.)/2., 'B42':sqrt(10.)/4., 'B43':sqrt(35.)/2., 'B44':sqrt(70.)/8., 
      'IB66':sqrt(231.)/16., 'IB65':3*sqrt(77.)/8., 'IB64':3*sqrt(14.)/16., 'IB63':sqrt(105.)/8., 'IB62':sqrt(105.)/16., 'IB61':sqrt(42.)/8.,
@@ -100,16 +106,11 @@ resmod4 = ResolutionModel(merlin.getResolution, xstart=-10, xend=82.9, accuracy=
 
 resmods = [resmod1, resmod2, resmod3, resmod4]
 
-curdir = os.path.dirname(__file__)
-mer46207_ei7_cut = Load(f'{curdir}/mer46207_ei7_cut_paper.nxs')
-mer46207_ei18_cut = Load(f'{curdir}/mer46207_ei18_cut_paper.nxs')
+datdir = os.path.join(os.path.dirname(__file__), 'datafiles')
+mer46207_ei7_cut = Load(f'{datdir}/mer46207_ei7_cut_paper.nxs')
+mer46207_ei18_cut = Load(f'{datdir}/mer46207_ei18_cut_paper.nxs')
 #mer46210_ei30_cut = Load(f'{curdir}/mer46210_ei30_cut.nxs')
-mer46210_ei82_cut = Load(f'{curdir}/mer46210_ei82_cut_paper.nxs')
-
-#mer46207_ei7_cut0 = Load(f'{curdir}/mer46207_ei7_cut.nxs')
-#mer46207_ei18_cut0 = Load(f'{curdir}/mer46207_ei18_cut.nxs')
-#mer46210_ei30_cut0 = Load(f'{curdir}/mer46210_ei30_cut.nxs')
-#mer46210_ei82_cut0 = Load(f'{curdir}/mer46210_ei82_cut.nxs')
+mer46210_ei82_cut = Load(f'{datdir}/mer46210_ei82_cut_paper.nxs')
 
 Blm_en1, Blm_en2 = (tb1, tb2)
 
@@ -135,8 +136,7 @@ for pn in Blm_en1.keys():
     tdic[f'ion1.{pn}'] = Blm_en2[pn]
 cf.ties(tdic)
 cf.constraints('ion0.B20 < 0')
-#print(cf.function)
-#print('\n'.join(str(cf.function).split(',')))
+
 # Gaussian background only for Ei=7meV
 mev7gauss = Function('Gaussian', Height=26869.4, PeakCentre=0.007071, Sigma=0.145)
 cf.background = Background(background=Function('LinearBackground', A0=45, A1=0),
@@ -147,15 +147,27 @@ fit = CrystalFieldFit(Model=cf, InputWorkspace=[mer46207_ei7_cut, mer46207_ei18_
 fn = fit.model.function
 fn.setParameter('sp1.IntensityScaling', 0.8)
 
+# We use the Fit object to extract data and initial parameters for our own fit so don't need to run fit()
+# here - if fit() was run here then the optimize parameters from this will be used as initial pars in our fit later.
 #fit.fit()
-#raise RuntimeError
 
+# Some good parameters previously fitted
 #c2=18386.86584234639; bp = [-0.22944678112849534, -0.12338457675455622, 0.0005720649564145049, -0.006839654051757746, 0.002971709870025127, -9.357197872608092e-06, -0.00015160393269016674, -0.00013274045367271903, 4.657266269384956e-05, 0.2044687465781279, 0.01620484979835499, -0.011520691549107008, -2.4383678654487005e-05, 0.0001660737874817983, 3.3896004625846956e-05, 0.13446103508129548, 0.9667216670517619, -8.840993527971507e-05, 0.015308, 0.00721241, 6.20744e-06, 1.47268e-05, 8.68551e-06, 3.77251e-06, 0.172559, -0.0148472, -0.010784, 2.62917e-05, 3.12198e-06, 2.45362e-06]
 #c2=15453.000886364887; bp = [-0.1553698942008458, -0.11873775005427284, 2.1346833435589113e-05, -0.007017957930301513, -0.0017478002958664115, -1.550978635992538e-05, 1.7313310561109213e-05, -0.0001382400497361041, -7.836633719727565e-05, 0.240405575151383, 0.015419376300137427, -0.011067959956369375, -2.028169869266797e-05, 0.00014626866946865728, 4.679162469875585e-05, 0.04824340462449858, 0.6929608944254517, -0.00029899286772881424, 0.01999464339544023, 0.006441033973347532, 5.534267199921736e-06, 1.576530308175671e-05, 8.604100889925321e-06, 3.613961729871829e-06, 0.17864634300460625, -0.01912900138283579, -0.01203134832626349, 2.5007454989344703e-05, 3.0709109983285683e-06, 2.7215765298750454e-06]
 c2=15389.496264834434; bp = [-0.15726033447010263, -0.121794439940964, 2.1797488592494495e-05, -0.007151518683324305, -0.0017831448817177019, -1.6397847135697645e-05, 1.8688256499126993e-05, -0.00013551111493153868, -7.870630154628545e-05, 0.24108533148802103, 0.015366318467031181, -0.011718813988565824, -2.0465801552405912e-05, 0.00014723812025898284, 4.703814737894199e-05, 0.04802911719367105, 0.7443884797493974, -0.00028510553611484817, 0.019835257748601773, 0.006378812619379386, 5.635703920303101e-06, 1.550558284346647e-05, 8.009048093650414e-06, 3.597630660736397e-06, 0.15857614665569283, -0.01888627394015916, -0.012397030987216043, 2.4939600883079418e-05, 2.952750144216143e-06, 2.3157675428880223e-06]
 #c2=17419.225233398298; bp = [-0.22948934278967628, -0.12339782854644091, 0.0005720649564145049, -0.006822454167325428, 0.0030043101540715104, -9.357197872608092e-06, -0.00015160393269016674, -0.00013274045367271903, 4.6686905748070085e-05, 0.24227051592741058, 0.015827444467953623, -0.011507619588929053, -2.5436004399678387e-05, 0.0001660737874817983, 3.0327429564407763e-05, 0.13446871182791642, 0.9609928750431485, -9.672383049872361e-05, 0.015308, 0.00721241, 6.20744e-06, 1.47268e-05, 8.68551e-06, 3.77251e-06, 0.172559, -0.0148472, -0.010784, 2.62917e-05, 3.12198e-06, 2.45362e-06]
+
+# Uncomment this to run the fit, otherwise it will evaluate the model with one of the good parameters above only.
+# Note that fitting could take a very long time (~hours to days)
+bp = None
+
+# Use a local simplex fit by default, but could also use a global algorithm or GOFit (both commented out)
 chi2bp = cef_utils.fit_en(fit, [[0, 0.7, 7.5, 30.35, 32.2], [0, 1.3, 12.2, 31.0]], eval_only=bp, 
-    widths_kwargs={'maxfwhm':[0.75, 7.0, 10.0], 'method':'trust-constr', 'jac':'3-point', 'options':{'maxiter':10}})
+    fit_alg='local', method='Nelder-Mead', jac='3-point', options={'maxiter':1}, # Use 1 iteration to make it short for tests
+    #fit_alg='global', algorithm='differential_evolution', 
+    #fit_alg='gofit', options={'maxiter':100, 'samples':10},
+    widths_kwargs={'maxfwhm':[0.75, 7.0, 10.0], 'method':'Nelder-Mead', 'jac':'3-point', 'options':{'maxiter':10}})
+
 cfpars, cfobjs, peaks, intscal, origwidths = cef_utils.parse_cef_func(fit.model.function)
 cef_utils.genpp(fit)
 cef_utils.printpars(fit)
@@ -208,9 +220,8 @@ gz2 = 2 * gJ * np.dot(np.conj(gs2), np.dot(Jz, gs2))
 print('gx = {}; gy = {}; gz = {}'.format(np.real(gx1), np.real(gy1), np.real(gz1)))
 print('gx = {}; gy = {}; gz = {}'.format(np.real(gx2), np.real(gy2), np.real(gz2)))
 
-# Comment out to plot
-raise RuntimeError
-
+# Uncomment out to plot
+"""
 import matplotlib.pyplot as plt
 from mantid.plots.utility import MantidAxType
 from mantid.api import AnalysisDataService as ADS
@@ -246,3 +257,4 @@ legend = axes.legend(fontsize=8.0).set_draggable(True).legend
 plt.show()
 # Scripting Plots in Mantid:
 # https://docs.mantidproject.org/tutorials/python_in_mantid/plotting/02_scripting_plots.html
+"""

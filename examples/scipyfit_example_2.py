@@ -10,7 +10,7 @@ from CrystalField import CrystalField, PointCharge, ResolutionModel, CrystalFiel
 from CrystalField.energies import energies
 from pychop.Instruments import Instrument
 
-sys.path.append(os.path.dirname(__file__))
+sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 import importlib
 import cef_utils
 importlib.reload(cef_utils)
@@ -32,13 +32,13 @@ def r5(v):
 # 1.3, 2.3, 8.1, 10.2, ~20, ~36
 
 # Loads data
-curdir = os.path.dirname(__file__)
+datdir = os.path.join(os.path.dirname(__file__), 'datafiles')
 if 'Ei100_20K_cut' not in mtd:
-    Ei100_7K_cut = Scale(Load(f'{curdir}/cuts/MAR28975_100meV_cut.nxs', OutputWorkspace='tmp'), 1000)
-    Ei23_7K_cut = Scale(Load(f'{curdir}/cuts/MAR28975_23meV_cut.nxs', OutputWorkspace='tmp'), 1000)
-    Ei10_7K_cut = Scale(Load(f'{curdir}/cuts/MAR28975_10meV_cut.nxs', OutputWorkspace='tmp'), 1000)
-    Ei100_20K_cut = Scale(Load(f'{curdir}/cuts/MAR28977_100meV_cut.nxs', OutputWorkspace='tmp'), 1000)
-    Ei10_100K_cut = Scale(Load(f'{curdir}/cuts/MAR28979_10meV_cut.nxs', OutputWorkspace='tmp'), 1000)
+    Ei100_7K_cut = Scale(Load(f'{datdir}/MAR28975_100meV_cut.nxs', OutputWorkspace='tmp'), 1000)
+    Ei23_7K_cut = Scale(Load(f'{datdir}/MAR28975_23meV_cut.nxs', OutputWorkspace='tmp'), 1000)
+    Ei10_7K_cut = Scale(Load(f'{datdir}/MAR28975_10meV_cut.nxs', OutputWorkspace='tmp'), 1000)
+    Ei100_20K_cut = Scale(Load(f'{datdir}/MAR28977_100meV_cut.nxs', OutputWorkspace='tmp'), 1000)
+    Ei10_100K_cut = Scale(Load(f'{datdir}/MAR28979_10meV_cut.nxs', OutputWorkspace='tmp'), 1000)
     DeleteWorkspace('tmp')
 else:
     Ei100_7K_cut = mtd['Ei100_7K_cut']
@@ -90,20 +90,10 @@ fit = CrystalFieldFit(Model=cf, InputWorkspace=[Ei23_7K_cut, Ei10_7K_cut, Ei100_
 
 e0 = [0, 0, 1.3, 2.3, 8.1, 10.2, 20, 26]
 
-# importlib.reload(cef_utils)
-# #c2 = cef_utils.fit_widths(fit, maxfwhm=maxFWHMs, method='L-BFGS-B', jac='3-point', options={'maxiter':200})
-# c2 = cef_utils.fit_widths(fit, maxfwhm=maxFWHMs, method='Nelder-Mead', options={'maxiter':200})
-# #c2 = cef_utils.fit_widths(fit, maxfwhm=maxFWHMs, method='trust-constr', jac='3-point', options={'maxiter':200})
-# fit.fit()
 
-# importlib.reload(cef_utils)
-# res = cef_utils.fit_cef(fit, method='SLSQP', jac='3-point', options={'maxiter':600},
-#     widths_kwargs={'maxfwhm':maxFWHMs, 'method':'trust-constr', 'jac':'3-point', 'options':{'maxiter':200}})
-
-# res = cef_utils.fit_en(fit, e0, 
-#    fit_alg='local', method='Nelder-Mead', jac='3-point', options={'maxiter':500},
-#    widths_kwargs={'maxfwhm':maxFWHMs, 'method':'trust-constr', 'jac':'3-point', 'options':{'maxiter':200}})
-
+##############################################################################
+# Set next line to True to run global fit - stop it manually to get and 
+# run line 110-110 to get good parameters then run 122 to end to do local fit
 do_global = False
 
 globalg = 'differential_evolution'
@@ -115,7 +105,7 @@ globalg = 'differential_evolution'
 if do_global:
     res = cef_utils.fit_en(fit, e0, is_voigt=True,
         fit_alg='global', algorithm=globalg, #fit_alg='gofit', options={'maxiter':100, 'samples':10},
-        widths_kwargs={'maxfwhm':maxFWHMs, 'method':'trust-constr', 'jac':'3-point', 'options':{'maxiter':10}})
+        widths_kwargs={'maxfwhm':maxFWHMs, 'method':'Nelder-Mead', 'jac':'3-point', 'options':{'maxiter':10}})
     print(res)
     print(res.x.tolist())
 bp = [] if 'bestpars' not in mtd else np.squeeze(mtd['bestpars'].extractY())
@@ -126,31 +116,29 @@ print(bp.tolist()) if hasattr(bp, 'tolist') else print(bp)
 bp = [-0.030481321832418973, -0.004304931818583363, 0.06308513873429943, 0.00020277082272632596, -0.00278830529188033]
 
 
-if 1:#False:
-    cf = CrystalField('Pr', 'C4', Temperature=[7,7,7,20], FWHM=FWHMs, **B0)
-    cf.IntensityScaling = [1]*4
-    #cf.PeakShape = 'Gaussian'
-    #cf.PeakShape = 'PseudoVoigt'
-    cf.ToleranceIntensity = 10
-    cf.background = Background(background=Function('LinearBackground', A0=0.003, A1=0))
-    #for jj in range(4): cf.constraints(f'0.8<IntensityScaling{jj}<1.2')
-    
-    fit = CrystalFieldFit(Model=cf, InputWorkspace=[Ei23_7K_cut, Ei10_7K_cut, Ei100_7K_cut, Ei100_20K_cut],
-                          MaxIterations=0, Output='fit')
-    chi2bp = cef_utils.fit_en(fit, e0, eval_only=bp, widths_kwargs={'maxfwhm':maxFWHMs, 'method':'trust-constr', 'jac':'3-point', 'options':{'maxiter':200}},
-                is_voigt=True)
-    #try:
-    #    fit.fit()
-    #except:
-    #    pass
-    print(chi2bp)
-    #cef_utils.genpp(fit)
+##############################################################################
+# Runs Local fit
 
-localg = 'COBYLA'#'trust-constr'#'CG'#'BFGS'#'Powell'#'Nelder-Mead'
-localg = 'Nelder-Mead'#'SLSQP'#'TNC'
+cf = CrystalField('Pr', 'C4', Temperature=[7,7,7,20], FWHM=FWHMs, **B0)
+cf.IntensityScaling = [1]*4
+#cf.PeakShape = 'Gaussian'
+#cf.PeakShape = 'PseudoVoigt'
+cf.ToleranceIntensity = 10
+cf.background = Background(background=Function('LinearBackground', A0=0.003, A1=0))
+#for jj in range(4): cf.constraints(f'0.8<IntensityScaling{jj}<1.2')
+# Set up a new Fit object in case we use the global fit    
+fit = CrystalFieldFit(Model=cf, InputWorkspace=[Ei23_7K_cut, Ei10_7K_cut, Ei100_7K_cut, Ei100_20K_cut],
+                      MaxIterations=0, Output='fit')
+chi2bp = cef_utils.fit_en(fit, e0, eval_only=bp, widths_kwargs={'maxfwhm':maxFWHMs, 'method':'Nelder-Mead', 'jac':'3-point', 'options':{'maxiter':200}}, is_voigt=True)
+print(chi2bp)
+#cef_utils.genpp(fit)
+
+# Possible local fit algorithms - see scipy.optimize help page for more info
+#localg = 'COBYLA'#'trust-constr'#'CG'#'BFGS'#'Powell'#'Nelder-Mead'#'SLSQP'#'TNC'
+localg = 'Nelder-Mead'
 res = cef_utils.fit_en(fit, e0, is_voigt=True,
-   fit_alg='local', method=localg, jac='3-point', options={'maxiter':10},
-   widths_kwargs={'maxfwhm':maxFWHMs, 'method':'trust-constr', 'jac':'3-point', 'options':{'maxiter':200}})
+   fit_alg='local', method=localg, jac='3-point', options={'maxiter':1}, # restrict to 1 iteration to run fast for tests
+   widths_kwargs={'maxfwhm':maxFWHMs, 'method':'Nelder-Mead', 'jac':'3-point', 'options':{'maxiter':200}})
 print(res)
 print(res.x.tolist())
 bp = np.squeeze(mtd['bestpars'].extractY())

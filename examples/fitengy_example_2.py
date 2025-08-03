@@ -4,7 +4,8 @@ import mantid.simpleapi as s_api
 import matplotlib.pyplot as plt
 import numpy as np
 import sys, os
-sys.path.append(os.path.dirname(__file__))
+curdir = os.path.dirname(__file__)
+sys.path.append(os.path.join(curdir, '..'))
 from cef_utils import fitengy
 
 from CrystalField import CrystalField, CrystalFieldFit, Background, Function
@@ -36,7 +37,7 @@ num_iter = 0#10000
 
 # Gets the data using MSlice.
 if 'yb_fit_data' not in s_api.mtd:
-    MAR28873_70meV = mc.Load(Filename='MAR28873_70meV.nxspe', OutputWorkspace='MAR28873_70meV')
+    MAR28873_70meV = mc.Load(Filename=f'{curdir}/datafiles/MAR28873_70meV.nxspe', OutputWorkspace='MAR28873_70meV')
     cut_ws_0 = mc.Cut(MAR28873_70meV, CutAxis="DeltaE,-10.0,39.0,0.5", IntegrationAxis="|Q|,0.0,2.0,0.0")
     s_api.ConvertMDHistoToMatrixWorkspace(InputWorkspace=cut_ws_0.raw_ws, OutputWorkspace='yb_fit_data', Normalization='NumEventsNormalization', FindXAxis=False)
     s_api.Scale(InputWorkspace='yb_fit_data', OutputWorkspace='yb_fit_data', Factor=0.50420168067226889)
