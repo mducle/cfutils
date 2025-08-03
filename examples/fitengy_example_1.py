@@ -4,13 +4,17 @@ import mantid.simpleapi as s_api
 import matplotlib.pyplot as plt
 import numpy as np
 import sys, os
-sys.path.append(os.path.dirname(__file__))
+curdir = os.path.dirname(__file__)
+sys.path.append(os.path.join(curdir, '..'))
 from cef_utils import fitengy
 import scipy.io
 import scipy.optimize
 
 from CrystalField import CrystalField, CrystalFieldFit, Background, Function
 import mslice.cli as mc
+
+# Data and parameters published in Guchhait et al., Phys. Rev. B 110 144434 (2024)
+# https://doi.org/10.1103/PhysRevB.110.144434
 
 # For RKNaNbO5, rare earth is at site 2c which has symmetry 4mm or C4v.
 sym = 'C4v'
@@ -36,8 +40,8 @@ fit_cp = False
 
 # Gets the data using MSlice.
 if 'nd_fit_data_6K' not in s_api.mtd:
-    MAR28881_40meV = mc.Load(Filename='MAR28881_40meV.nxspe', OutputWorkspace='MAR28881_40meV')
-    MAR28891_40meV = mc.Load(Filename='MAR28891_40meV.nxspe', OutputWorkspace='MAR28891_40meV')
+    MAR28881_40meV = mc.Load(Filename=f'{curdir}/datafiles/MAR28881_40meV.nxspe', OutputWorkspace='MAR28881_40meV')
+    MAR28891_40meV = mc.Load(Filename=f'{curdir}/datafiles/MAR28891_40meV.nxspe', OutputWorkspace='MAR28891_40meV')
     ws_MAR28881_40meV_subtracted = mc.Minus(LHSWorkspace=MAR28881_40meV, RHSWorkspace=MAR28891_40meV, OutputWorkspace='MAR28881_40meV_subtracted')
     cut_ws_0 = mc.Cut(ws_MAR28881_40meV_subtracted, CutAxis="DeltaE,-30.0,30.0,0.25", IntegrationAxis="|Q|,0.0,3.0,0.0")
     s_api.ConvertMDHistoToMatrixWorkspace(InputWorkspace=cut_ws_0.raw_ws, OutputWorkspace='nd_fit_data_6K', Normalization='NumEventsNormalization', FindXAxis=False)
@@ -45,8 +49,8 @@ if 'nd_fit_data_6K' not in s_api.mtd:
     s_api.ConvertToDistribution(Workspace='nd_fit_data_6K')
 
 if 'nd_fit_data_200K' not in s_api.mtd:
-    MAR28899_40meV = mc.Load(Filename='MAR28899_40meV.nxspe', OutputWorkspace='MAR28899_40meV')
-    MAR28900_40meV = mc.Load(Filename='MAR28900_40meV.nxspe', OutputWorkspace='MAR28900_40meV')
+    MAR28899_40meV = mc.Load(Filename=f'{curdir}/datafiles/MAR28899_40meV.nxspe', OutputWorkspace='MAR28899_40meV')
+    MAR28900_40meV = mc.Load(Filename=f'{curdir}/datafiles/MAR28900_40meV.nxspe', OutputWorkspace='MAR28900_40meV')
     ws_MAR28899_40meV_subtracted = mc.Minus(LHSWorkspace=MAR28899_40meV, RHSWorkspace=MAR28900_40meV, OutputWorkspace='MAR28899_40meV_subtracted')
     cut_ws_0 = mc.Cut(ws_MAR28899_40meV_subtracted, CutAxis="DeltaE,-30.0,30.0,0.25", IntegrationAxis="|Q|,0.0,3.0,0.0")
     s_api.ConvertMDHistoToMatrixWorkspace(InputWorkspace=cut_ws_0.raw_ws, OutputWorkspace='nd_fit_data_200K', Normalization='NumEventsNormalization', FindXAxis=False)
@@ -55,7 +59,7 @@ if 'nd_fit_data_200K' not in s_api.mtd:
 
 # Loads Cp data
 if 'cp_data_0T' not in s_api.mtd:
-    cp_mat = scipy.io.loadmat(os.path.join(os.path.dirname(__file__), 'NdKNaNbO5_cp.mat'))['hcs'][0]
+    cp_mat = scipy.io.loadmat(os.path.join(os.path.dirname(__file__), 'datafiles', 'NdKNaNbO5_cp.mat'))['hcs'][0]
     for ii, hh in enumerate([0, 1, 2, 3, 4.5, 6, 9]):
         s_api.CreateWorkspace(cp_mat[ii][:,0], cp_mat[ii][:,1], OutputWorkspace=f'cp_data_{hh}T')
 

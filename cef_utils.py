@@ -546,8 +546,8 @@ def evalfit_voigt(fitobj, peaklist=None, pfit=None):
 
 
 def fit_en(fitobj, enlist, eval_only=None, is_voigt=False, **kwargs):
+    origshape = fitobj.model.PeakShape
     if is_voigt:
-        origshape = fitobj.model.PeakShape
         fitobj.model.PeakShape = 'Lorentzian'
         fstr = str(fitobj.model.function)
     cfpars, cfobjs, peaks, intscal, origwidths = parse_cef_func(fitobj.model.function)
@@ -594,7 +594,10 @@ def fit_en(fitobj, enlist, eval_only=None, is_voigt=False, **kwargs):
                 fitobj.model[ky] = vl
             blms.append(b0)
         for ky, vl in origwidths.items():
-            fitobj.model[ky] = vl
+            try:
+                fitobj.model[ky] = vl
+            except IndexError:
+                pass
         if retres:
             chi2, resi = fit_widths(fitobj, retres=True, is_voigt=is_voigt, **widths_kw)
         else:
