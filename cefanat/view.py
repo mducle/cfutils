@@ -6,9 +6,9 @@ In addition it has a method, connect(), which should be used to connect callback
 """
 
 import numpy as np
-from qtpy.QtCore import QEventLoop, Qt, QProcess, Signal  # noqa
+from qtpy.QtCore import QEventLoop, Qt, QProcess, Signal, QAbstractTableModel  # noqa
 from qtpy.QtWidgets import (QAction, QCheckBox, QComboBox, QDialog, QFileDialog, QGridLayout, QHBoxLayout, QMenu, QLabel,
-                            QLineEdit, QMainWindow, QMessageBox, QPushButton, QSizePolicy, QSpacerItem, QTabWidget,
+                            QLineEdit, QMainWindow, QMessageBox, QPushButton, QSizePolicy, QSpacerItem, QTabWidget, QTableView,
                             QGroupBox, QRadioButton, QStackedWidget, QTextEdit, QVBoxLayout, QListWidget, QWidget)  # noqa
 from matplotlib.figure import Figure
 from matplotlib.widgets import Slider
@@ -61,6 +61,45 @@ def create_vertical_inputs(parent, spec):
     widget = QWidget(parent)
     widget.setLayout(layout)
     return widget
+
+
+class dummyBlm():
+    def __init__(self):
+        self.data = {}
+    def __getitem__(self, ind): return self.data[ind] if ind in self.data else 0.0
+    def __setitem__(self, ind, value): 
+        self.data[ind] = value
+    def allowed(self, i1, i2): return True
+
+
+class BlmTableModel(QAbstractTableModel):
+    changed = Signal(dict)
+    rows = ['0', '1', '-1', '2', '-2', '3', '-3', '4', '-4', '5', '-5', '6', '-6']
+    cols = ['2', '4', '6']
+    editable = Qt.ItemIsEditable | Qt.ItemIsEnabled | Qt.ItemIsSelectable
+    def __init__(self, Blmobj, parent=None):
+        super(BlmTableModel, self).__init__(parent)
+        self.Blmobj = Blmobj
+    def rowCount(self, parent): return 13
+    def columnCount(self, parent): return 3
+    def flags(self, index):
+        return self.editable if self.Blmobj.allowed(int(self.cols[index.column()]), int(self.rows[index.row()])) else Qt.NoItemFlags
+    def data(self, index, role):
+        return self.Blmobj[int(self.cols[index.column()]), int(self.rows[index.row()])]
+    def setData(self, index, value, role=Qt.EditRole):
+        self.Blmobj[int(self.cols[index.column()]), int(self.rows[index.row()])] = value
+        return True
+    def headerData(self, section, orientation, role=None):
+        if role == Qt.DisplayRole and orientation == Qt.Horizontal:
+            return f'l={self.cols[section]}'
+        if role == Qt.DisplayRole and orientation == Qt.Vertical:
+            return f'm={self.rows[section]}'
+
+
+class BlmTable(QTableView):
+    def __init__(self, Blmobj=None, parent=None):
+        super(BlmTable, self).__init__(parent)
+        self.setModel(BlmTableModel(Blmobj if Blmobj is not None else dummyBlm(), parent))
 
 
 class RadioGroup(QGroupBox):
@@ -134,9 +173,11 @@ class CEFAnaTView(QWidget):
             ]:
             self.datapropstack.addWidget(prop)
         self.datatype.changed.connect(lambda index: self.datapropstack.setCurrentIndex(index))
+        self.dataedit = QPushButton('Edit')
         propslayout = QVBoxLayout()
         propslayout.addWidget(self.datatype)
         propslayout.addWidget(self.datapropstack)
+        propslayout.addWidget(self.dataedit)
         self.dataprops.setLayout(propslayout)
         self.datalayout.addWidget(self.dataloadbtn, 0, 0)
         self.datalayout.addWidget(self.datalist, 1, 0)
@@ -146,17 +187,44 @@ class CEFAnaTView(QWidget):
         self.datatab.setLayout(self.datalayout)
 
     def drawmodeltab(self):
-        self.modellayout = QGridLayout()
-        self.modelsitelist = QListWidget(self.modeltab)
-        self.modeladdsite = create_vertical_inputs(self,
-          [
-            ['pair', 'Ion', QComboBox, 'modelinput_ion'],
-            ['pair', 'Symmetry', QComboBox, 'modelinput_sym'],
-            ['single', 'Add site', QPushButton, 'modelinput_add']
-          ])
-        self.modellayout.addWidget(self.modelsitelist, 0, 0)
-        self.modellayout.addWidget(self.modeladdsite, 1, 0)
-        self.modeltab.setLayout(self.modellayout)
+        self.modelouterlayout = QHBoxLayout()
+        self.modelinner, self.modellayout = zip(*((QWidget(), QVBoxLayout()) for i in range(2)))
+        self.modeltype = RadioGroup(self, ['Parameters', 'Point Charge', 'Fit Energy'], 'Model Type')
+        self.modeltypestack = QStackedWidget(self.modeltab)
+        for prop in [
+            create_vertical_inputs(self, [
+                ['pair', 'Ion', QComboBox, 'modelinput_ion'],
+                ['pair', 'Symmetry', QComboBox, 'modelinput_sym'],
+                ['single', 'Add site', QPushButton, 'modelinput_add'], ['spacer', 250]]),
+            create_vertical_inputs(self, [
+                ['pair', 'CIF File', QLineEdit, 'modelinputciffile'],
+                ['single', 'Browse', QPushButton, 'modelinputcifbrowse'],
+                ['single', 'Load', QPushButton, 'modelinputcifload'], ['spacer', 250]]),
+            create_vertical_inputs(self, [
+                ['pair', 'Energy Levels', QLineEdit, 'modelinputenergies'],
+                ['single', 'Compute', QPushButton, 'modelinputencompute'], ['spacer', 300]])
+            ]:
+            self.modeltypestack.addWidget(prop)
+        self.modeltype.changed.connect(lambda index: self.modeltypestack.setCurrentIndex(index))
+        def get_cif():
+            dlg = QFileDialog(self)
+            dlg.setNameFilter('*.cif')
+            if dlg.exec():
+                cifs = dlg.selectedFiles()
+                if cifs:
+                    self.modelinputciffile.setText(cifs[0])
+        self.modelinputcifbrowse.clicked.connect(get_cif)
+        self.modelparatabs = QTabWidget(self)
+        self.modelparams = [BlmTable(parent=self.modelparatabs)]
+        self.modelparatabs.addTab(self.modelparams[0], 'Site 1')
+        self.modellayout[0].addWidget(self.modeltype)
+        self.modellayout[0].addWidget(self.modeltypestack)
+        self.modellayout[1].addWidget(self.modelparatabs)
+        for ii, stretchfac in zip(range(2), [1, 4]):
+            self.modelinner[ii].setLayout(self.modellayout[ii])
+            self.modelouterlayout.addWidget(self.modelinner[ii])
+            self.modelouterlayout.setStretch(ii, stretchfac)
+        self.modeltab.setLayout(self.modelouterlayout)
         
     def drawfittab(self):
         pass
