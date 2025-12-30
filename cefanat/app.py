@@ -1,5 +1,5 @@
 import sys
-from . import view
+from . import view, presenter
 from qtpy.QtWidgets import QMainWindow
 
 try:
@@ -16,6 +16,7 @@ def main():
     mainwindow = QMainWindow()
     mainview = view.CEFAnaTView()
     view.setup_menu(mainwindow, mainview)
+    mainpresenter = presenter.CEFAnaTPresenter(mainview)
     mainwindow.setCentralWidget(mainview)
     mainwindow.setWindowTitle("CEFAnaT")
     mainwindow.show()

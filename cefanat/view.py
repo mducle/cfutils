@@ -8,8 +8,9 @@ In addition it has a method, connect(), which should be used to connect callback
 import numpy as np
 from qtpy.QtCore import QEventLoop, Qt, QProcess, Signal, QAbstractTableModel  # noqa
 from qtpy.QtWidgets import (QAction, QCheckBox, QComboBox, QDialog, QFileDialog, QGridLayout, QHBoxLayout, QMenu, QLabel,
-                            QLineEdit, QMainWindow, QMessageBox, QPushButton, QSizePolicy, QSpacerItem, QTabWidget, QTableView,
-                            QGroupBox, QRadioButton, QStackedWidget, QTextEdit, QVBoxLayout, QListWidget, QWidget)  # noqa
+                            QLineEdit, QMainWindow, QMessageBox, QPushButton, QSizePolicy, QSpacerItem, QTabWidget,
+                            QGroupBox, QRadioButton, QStackedWidget, QTextEdit, QVBoxLayout, QListWidget, QWidget,
+                            QTableWidget, QTableWidgetItem)  # noqa
 from matplotlib.figure import Figure
 from matplotlib.widgets import Slider
 
@@ -63,43 +64,53 @@ def create_vertical_inputs(parent, spec):
     return widget
 
 
-class dummyBlm():
-    def __init__(self):
-        self.data = {}
-    def __getitem__(self, ind): return self.data[ind] if ind in self.data else 0.0
-    def __setitem__(self, ind, value): 
-        self.data[ind] = value
-    def allowed(self, i1, i2): return True
+def _create_blmwidget(parent, spec):
+    layout = QVBoxLayout()
+    for inp in spec:
+        w1 = QWidget(parent)
+        l1 = QHBoxLayout()
+        l1.addWidget(QLabel(inp[0]))
+        inpwidget = QLineEdit(parent)
+        l1.addWidget(inpwidget)
+        w1.setLayout(l1)
+        layout.addWidget(w1)
+        setattr(parent, f'{inp[1]}_holder', w1)
+        setattr(parent, inp[1], inpwidget)
+    widget = QWidget(parent)
+    widget.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Fixed)
+    widget.setLayout(layout)
+    return widget
 
 
-class BlmTableModel(QAbstractTableModel):
-    changed = Signal(dict)
-    rows = ['0', '1', '-1', '2', '-2', '3', '-3', '4', '-4', '5', '-5', '6', '-6']
-    cols = ['2', '4', '6']
-    editable = Qt.ItemIsEditable | Qt.ItemIsEnabled | Qt.ItemIsSelectable
-    def __init__(self, Blmobj, parent=None):
-        super(BlmTableModel, self).__init__(parent)
-        self.Blmobj = Blmobj
-    def rowCount(self, parent): return 13
-    def columnCount(self, parent): return 3
-    def flags(self, index):
-        return self.editable if self.Blmobj.allowed(int(self.cols[index.column()]), int(self.rows[index.row()])) else Qt.NoItemFlags
-    def data(self, index, role):
-        return self.Blmobj[int(self.cols[index.column()]), int(self.rows[index.row()])]
-    def setData(self, index, value, role=Qt.EditRole):
-        self.Blmobj[int(self.cols[index.column()]), int(self.rows[index.row()])] = value
-        return True
-    def headerData(self, section, orientation, role=None):
-        if role == Qt.DisplayRole and orientation == Qt.Horizontal:
-            return f'l={self.cols[section]}'
-        if role == Qt.DisplayRole and orientation == Qt.Vertical:
-            return f'm={self.rows[section]}'
-
-
-class BlmTable(QTableView):
-    def __init__(self, Blmobj=None, parent=None):
+class BlmTable(QWidget):
+    def __init__(self, parent=None, symm=0, extras=None):
+        """Creates a CEF parameters widget defined by a symmetry
+        symm (int): symmetry parameter - m values divisible by symm are allowed
+        extras (list): List of extra parameters
+        """
         super(BlmTable, self).__init__(parent)
-        self.setModel(BlmTableModel(Blmobj if Blmobj is not None else dummyBlm(), parent))
+        self.extras = extras
+        baselayout = QVBoxLayout()
+        ceflayout = QHBoxLayout()
+        self.blmwidgets = [_create_blmwidget(self, [
+            [f'B<sub>{l}</sub><sup>{m}</sup>', f'b{l}{m}'] for m in range(-l, l+1)
+        ]) for l in [2, 4, 6]]
+        [ceflayout.addWidget(w) for w in self.blmwidgets]
+        self.cefwidget = QWidget(parent=self)
+        self.cefwidget.setLayout(ceflayout)
+        baselayout.addWidget(self.cefwidget)
+        if extras:
+            self.extraswidget = _create_blmwidget(self, [[x, f'inp_{x}'] for x in extras])
+            baselayout.addWidget(self.extraswidget)
+        baselayout.setAlignment(Qt.AlignTop)
+        self.setLayout(baselayout)
+        self.set_symm(symm)
+    def set_symm(self, symm):
+        if symm == 0:
+            return
+        for lm in ([l,m] for l in [2,4,6] for m in range(-l,l+1)):
+            if (lm[1] < 0 and symm > 0) or (lm[1] % symm != 0):
+                getattr(getattr(self, f'b{lm[0]}{lm[1]}_holder'), 'setHidden')(True)
 
 
 class RadioGroup(QGroupBox):
@@ -122,15 +133,69 @@ class RadioGroup(QGroupBox):
         return [bt.text() for bt in self.buttons if bt.isChecked()][0]
 
 
+class ExclusiveComboHeaders():
+    def __init__(self, table, parent, xyeind=[0,1,2]):
+        self.table = table
+        self.parent = parent
+        self.combos = []
+        self.xyeind = np.array(xyeind)
+        self.can_change = False
+        ncol = table.columnCount()
+        for ii in range(ncol):
+            self.combos.append(QComboBox())
+            self.combos[ii].addItems(np.array(['x', 'y', 'e', 'unused'])[:ncol])
+            self.combos[ii].setCurrentIndex(3)
+            self.table.setCellWidget(0, ii, self.combos[ii])
+            self.combos[ii].currentIndexChanged.connect(lambda index, ci=ii: self.on_change(ci, index))
+        for ii, jj in enumerate(xyeind):
+            if jj is not None and jj < len(self.combos):
+                self.combos[jj].setCurrentIndex(ii)
+        self.can_change = True
+    def on_change(self, col_ind, value):
+        # Changes the column type - make sure if column type already specified in another col, to swap them
+        if self.can_change:
+            old_col = np.where(self.xyeind == value)[0]
+            if len(old_col) > 0:
+                print(old_col, self.xyeind, col_ind, value)
+                self.can_change = False
+                self.xyeind[old_col[0]] = self.xyeind[col_ind]
+                self.combos[old_col[0]].setCurrentIndex(self.xyeind[old_col[0]])
+                self.can_change = True
+            self.xyeind[col_ind] = value
+            self.parent.textdatacombos_changed(self.parent.datalist.currentRow(), self.xyeind)
+
+
 class CEFAnaTView(QWidget):
 
     def __init__(self, parent=None):
         super(CEFAnaTView, self).__init__(parent)
         self.drawlayout()
 
-    def connect(self, widget, action, target):
+    def get_file(self, filt=None):
+        dlg = QFileDialog(self)
+        dlg.setNameFilter(filt)
+        dlg.setFileMode(QFileDialog.FileMode.ExistingFiles)
+        if dlg.exec():
+            return dlg.selectedFiles() 
+
+    def popupdlg(self, message, buttons=None):
+        dlg = QMessageBox(self)
+        dlg.setText(message)
+        dlg.setStandardButtons(buttons if buttons else QMessageBox.Ok)
+        return dlg.exec()
+
+    def connect(self, widget, action, target0):
         if not hasattr(self, widget):
             raise RuntimeError(f'Widget "{widget}" not part of this view')
+        # Handle special cases
+        match f'{widget}.{action}':
+            case 'datalist.currentItemChanged':
+                target = lambda cur, prv: target0(cur.text() if cur else '', prv.text() if prv else '')
+            case 'datalist.comboChanged':
+                self.textdatacombos_changed = target0
+                return
+            case _:
+                target = target0
         widgetobj, typestr = (getattr(self, widget), None)
         if '[' in action:
             action, typestr = action.replace(']','').split('[')
@@ -141,12 +206,89 @@ class CEFAnaTView(QWidget):
         else:
             getattr(widgetobj, action).connect(target)
 
+    def _setupdata_text_widget(self):
+        rv, ly, rw, rwly = (QWidget(self), QHBoxLayout(), QWidget(self), QVBoxLayout())
+        self.textdatatable = QTableWidget(self)
+        self.textdataraw = QTextEdit(self)
+        self.textdataraw.setReadOnly(True)
+        self.textdatainput = create_vertical_inputs(self, [
+            ['pair', 'Delimiter', QLineEdit, 'textdatadelimiter'],
+            ['pair', 'Fixed Width', QLineEdit, 'textdatawidth']])
+        rwly.addWidget(self.textdatainput)
+        rwly.addWidget(self.textdataraw)
+        rw.setLayout(rwly)
+        ly.addWidget(self.textdatatable)
+        ly.addWidget(rw)
+        rv.setLayout(ly)
+        return rv
+
+    def set_text_data(self, textdata, textraw, xyeind=[0,1,2]):
+        self.textdataraw.setText(textraw)
+        self.textdatatable.clear()
+        if (textdata is not None and len(tdim := textdata.shape) > 1):
+            self.textdatatable.setRowCount(tdim[0])
+            self.textdatatable.setColumnCount(tdim[1])
+            for i,j in [[i,j] for i in range(tdim[0]) for j in range(tdim[1])]:
+                self.textdatatable.setItem(i+1, j, QTableWidgetItem(f'{textdata[i,j]}'))
+        self.textdatacombos = ExclusiveComboHeaders(self.textdatatable, self, xyeind)
+        
+    def _setupdata_nxs_widget(self):
+        return QLabel('nxs')
+
+    def _setupdata_mat_widget(self):
+        return QLabel('mat')
+
+    def update_data(self, data):
+        match data.inputtype:
+            case 'text':
+                self.datadispstack.setCurrentIndex(0)
+                self.set_text_data(data.array, data.raw, data.xyeind)
+            case 'nxs':
+                self.datadispstack.setCurrentIndex(1)
+            case 'mat':
+                self.datadispstack.setCurrentIndex(2)
+        if data.array is not None:
+            self.plot_data(data)
+
+    def plot_data(self, data):
+        self.dataaxes.cla()
+        if data.array.shape[1] > 2:
+            self.dataaxes.errorbar(data.x, data.y, data.e, fmt='o')
+        else:
+            self.dataaxes.plot(data.x, data.y, 'o')
+        self.datacanvas.draw()
+
+    def update_data_list(self, name):
+        if name in [self.datalist.item(ii).text() for ii in range(self.datalist.count())]:
+            txtmsg = 'Name previously used. Click "Yes" to overwrite. Click "No" to rename. Click "Cancel" to not load'
+            userinp = self.popupdlg(txtmsg, QMessageBox.Yes | QMessageBox.No | QMessageBox.Cancel)
+            match userinp:
+                case QMessageBox.Yes:
+                    return name
+                case QMessageBox.No:
+                    self.datalist.addItem(f'{name}_new')
+                    return f'{name}_new'
+                case QMessageBox.Cancel:
+                    return None
+        else:
+            self.datalist.addItem(name)
+        return name
+
+    def set_current_data(self, index):
+        self.datalist.setCurrentRow(index)
+
     def drawdatatab(self):
         self.datalayout = QGridLayout()
         self.dataloadbtn = QPushButton("Load Data")
         self.datalist = QListWidget(self.datatab)
         self.datafig = Figure()
+        self.datadisplay = QTabWidget(self)
+        self.datadispstack = QStackedWidget(self)
+        for t in ['text', 'nxs', 'mat']:
+            self.datadispstack.addWidget(getattr(self, f'_setupdata_{t}_widget')()) 
         self.datacanvas = FigureCanvas(self.datafig)
+        self.datadisplay.addTab(self.datacanvas, 'Plot')
+        self.datadisplay.addTab(self.datadispstack, 'Data')
         self.dataaxes = self.datafig.add_subplot(111)
         self.datatools = QWidget()
         self.datatoolsnav = NavigationToolbar(self.datacanvas, self.datatab)
@@ -182,7 +324,7 @@ class CEFAnaTView(QWidget):
         self.datalayout.addWidget(self.dataloadbtn, 0, 0)
         self.datalayout.addWidget(self.datalist, 1, 0)
         self.datalayout.addWidget(self.datatools, 0, 1)
-        self.datalayout.addWidget(self.datacanvas, 1, 1)
+        self.datalayout.addWidget(self.datadisplay, 1, 1)
         self.datalayout.addWidget(self.dataprops, 0, 2, -1, 1)
         self.datatab.setLayout(self.datalayout)
 
@@ -207,15 +349,11 @@ class CEFAnaTView(QWidget):
             self.modeltypestack.addWidget(prop)
         self.modeltype.changed.connect(lambda index: self.modeltypestack.setCurrentIndex(index))
         def get_cif():
-            dlg = QFileDialog(self)
-            dlg.setNameFilter('*.cif')
-            if dlg.exec():
-                cifs = dlg.selectedFiles()
-                if cifs:
-                    self.modelinputciffile.setText(cifs[0])
+            if (cifs := self.get_file('*.cif')):
+                self.modelinputciffile.setText(cifs[0])
         self.modelinputcifbrowse.clicked.connect(get_cif)
         self.modelparatabs = QTabWidget(self)
-        self.modelparams = [BlmTable(parent=self.modelparatabs)]
+        self.modelparams = [BlmTable(parent=self.modelparatabs, symm=0)]
         self.modelparatabs.addTab(self.modelparams[0], 'Site 1')
         self.modellayout[0].addWidget(self.modeltype)
         self.modellayout[0].addWidget(self.modeltypestack)
