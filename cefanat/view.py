@@ -131,6 +131,8 @@ class RadioGroup(QGroupBox):
         return [ii for ii, bt in enumerate(self.buttons) if bt.isChecked()][0]
     def getSelected(self):
         return [bt.text() for bt in self.buttons if bt.isChecked()][0]
+    def setSelectedIndex(self, index):
+        self.buttons[index].setChecked(True)
 
 
 class ExclusiveComboHeaders():
@@ -156,7 +158,6 @@ class ExclusiveComboHeaders():
         if self.can_change:
             old_col = np.where(self.xyeind == value)[0]
             if len(old_col) > 0:
-                print(old_col, self.xyeind, col_ind, value)
                 self.can_change = False
                 self.xyeind[old_col[0]] = self.xyeind[col_ind]
                 self.combos[old_col[0]].setCurrentIndex(self.xyeind[old_col[0]])
@@ -169,6 +170,7 @@ class CEFAnaTView(QWidget):
 
     def __init__(self, parent=None):
         super(CEFAnaTView, self).__init__(parent)
+        self.is_noninteractive = False
         self.drawlayout()
 
     def get_file(self, filt=None):
@@ -238,6 +240,26 @@ class CEFAnaTView(QWidget):
     def _setupdata_mat_widget(self):
         return QLabel('mat')
 
+    def reset_data_meta(self, data=None):
+        self.is_noninteractive = True
+        for widg in ['datatype', '_insunit', '_mhunit', '_mtunit', '_chiunit']:
+            getattr(self, f'datainput{widg}' if widg.startswith('_') else widg).setSelectedIndex(0)
+        for widg in ['instt', 'insEi', 'insH', 'mhtt', 'mth', 'cph', 'insHdir', 'mthdir', 'cphdir']:
+            getattr(self, f'datainput_{widg}').setText('')
+        self.datainput_chiinv.setChecked(False)
+        if data is not None:
+            idx = data.datatype_index
+            self.datatype.setSelectedIndex(idx)
+            if data.datatype != 'CP':
+                getattr(self, f'datainput_{data.datatype.lower()}unit').setSelectedIndex(data.dataunit_index)
+            ew = [{'instt':'Temperature', 'insEi':'Ei', 'insH':'H', 'insHdir':'Hdir'}, {'mhtt':'Temperature'},
+                  {'mth':'H', 'mthdir':'Hdir'}, {}, {'cph':'H', 'cphdir':'Hdir'}][idx]
+            for wg, prp in ew.items():
+                getattr(self, f'datainput_{wg}').setText(str(getattr(data, prp)))
+            if data.datatype == 'CHI':
+                self.datainput_chiinv.setChecked(data.invchi)
+        self.is_noninteractive = False
+
     def update_data(self, data):
         match data.inputtype:
             case 'text':
@@ -247,6 +269,7 @@ class CEFAnaTView(QWidget):
                 self.datadispstack.setCurrentIndex(1)
             case 'mat':
                 self.datadispstack.setCurrentIndex(2)
+        self.reset_data_meta(data)
         if data.array is not None:
             self.plot_data(data)
 
@@ -256,6 +279,8 @@ class CEFAnaTView(QWidget):
             self.dataaxes.errorbar(data.x, data.y, data.e, fmt='o')
         else:
             self.dataaxes.plot(data.x, data.y, 'o')
+        self.dataaxes.set_xlabel(data.xlabel)
+        self.dataaxes.set_ylabel(data.ylabel)
         self.datacanvas.draw()
 
     def update_data_list(self, name):
@@ -302,16 +327,21 @@ class CEFAnaTView(QWidget):
         self.datapropstack = QStackedWidget(self.datatab)
         for prop in [
               create_vertical_inputs(self, [
-                ['pair', 'Temperature', QLineEdit, 'datainput_instt'],
+                [RadioGroup(self, ['meV', 'cm', 'THz'], 'Unit'), 'datainput_insunit'],
+                ['pair', 'Temperature (K)', QLineEdit, 'datainput_instt'],
                 ['pair', 'Incident Energy', QLineEdit, 'datainput_insEi'],
-                ['pair', 'Applied Field', QLineEdit, 'datainput_insH'],
+                ['pair', 'Applied Field (T)', QLineEdit, 'datainput_insH'],
+                ['pair', 'Field Direction', QLineEdit, 'datainput_insHdir'],
                 ['spacer', 100]]),
               create_vertical_inputs(self, [[RadioGroup(self, ['bohr', 'SI', 'cgs'], 'Unit'), 'datainput_mhunit'],
-                ['pair', 'Temperature', QLineEdit, 'datainput_mhtt'], ['spacer', 85]]),
+                ['pair', 'Temperature (K)', QLineEdit, 'datainput_mhtt'], ['spacer', 220]]),
               create_vertical_inputs(self, [[RadioGroup(self, ['bohr', 'SI', 'cgs'], 'Unit'), 'datainput_mtunit'],
-                ['pair', 'Magnetic Field', QLineEdit, 'datainput_mth'], ['spacer', 85]]),
-              create_vertical_inputs(self, [[RadioGroup(self, ['bohr', 'SI', 'cgs'], 'Unit'), 'datainput_chiunit'], ['spacer', 130]]),
-              create_vertical_inputs(self, [['pair', 'Magnetic Field', QLineEdit, 'datainput_mth'], ['spacer', 190]])
+                ['pair', 'Magnetic Field (T)', QLineEdit, 'datainput_mth'],
+                ['pair', 'Field Direction', QLineEdit, 'datainput_mthdir'], ['spacer', 220]]),
+              create_vertical_inputs(self, [[RadioGroup(self, ['bohr', 'SI', 'cgs'], 'Unit'), 'datainput_chiunit'],
+                ['pair', 'Inverse', QCheckBox, 'datainput_chiinv'], ['spacer', 220]]),
+              create_vertical_inputs(self, [['pair', 'Magnetic Field (T)', QLineEdit, 'datainput_cph'],
+                ['pair', 'Field Direction', QLineEdit, 'datainput_cphdir'], ['spacer', 300]]),
             ]:
             self.datapropstack.addWidget(prop)
         self.datatype.changed.connect(lambda index: self.datapropstack.setCurrentIndex(index))

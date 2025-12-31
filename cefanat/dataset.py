@@ -3,6 +3,15 @@ Dataset class for the Crystal Electric Field Analysis Toolkit (CEFAnaT)
 """
 import numpy as np
 
+# The order of these definitions must match the order in GroupBoxes in the View
+DATATYPES = ['INS', 'MH', 'MT', 'CHI', 'CP']
+MAGUNITS = ['bohr', 'SI', 'cgs']
+INSUNITS = ['meV', 'cm', 'THz']
+
+DATATYPE_TO_IND = {k:v for v, k in enumerate(DATATYPES)}
+MAGUNIT_TO_IND = {k:v for v, k in enumerate(MAGUNITS)}
+INSUNIT_TO_IND = {k:v for v, k in enumerate(INSUNITS)}
+
 class Dataset:
     """Helper data class - all data assumed to be 1D"""
 
@@ -12,6 +21,7 @@ class Dataset:
         self.inputtype = intype
         self.raw = raw
         self.datatype = 'INS'
+        self.Hdir = 'powder'
 
     @property
     def array(self):
@@ -54,6 +64,68 @@ class Dataset:
     def e(self):
         return self.array[:, self.e_ind] if self.e_ind else []
 
+    @property
+    def datatype(self):
+        return self._datatype
+
+    @datatype.setter
+    def datatype(self, value):
+        match value.upper():
+            case 'INS': self.unit, self.Temperature, self.Ei, self.H = ('meV', 0, 180, 0)
+            case 'MH': self.unit, self.Temperature = ('bohr', 1)
+            case 'MT': self.unit, self.H = ('bohr', 1)
+            case 'CHI': self.unit, self.invchi = ('bohr', False)
+            case 'CP': self.H = 0
+            case _:
+                raise RuntimeError(f'Unknown data type: {value}')
+        self._datatype = value.upper()
+
+    @property
+    def datatype_index(self):
+        return DATATYPE_TO_IND[self.datatype]
+ 
+    @datatype_index.setter
+    def datatype_index(self, value):
+        self.datatype = DATATYPES[value]
+
+    @property
+    def dataunit_index(self):
+        return INSUNIT_TO_IND[self.unit] if self.datatype == 'INS' else MAGUNIT_TO_IND[self.unit]
+
+    @dataunit_index.setter
+    def dataunit_index(self, value):
+        self.unit = INSUNITS[value] if self.datatype == 'INS' else MAGUNITS[value]
+
+    @property
+    def h_unit(self):
+        return 'T' if 'bohr' in self.unit or 'SI' in self.unit else 'Oe'
+
+    @property
+    def mag_unit(self):
+        return 'uB/ion' if 'bohr' in self.unit else 'Am' if 'SI' in self.unit else 'emu/mol'
+
+    @property
+    def chi_unit(self):
+        return 'uB/T/ion' if 'bohr' in self.unit else 'Am/T' if 'SI' in self.unit else 'emu/mol'
+
+    @property
+    def xlabel(self):
+        match self.datatype:
+            case 'INS': return f'Energy Transfer ({self.unit})'
+            case 'MH': return f'Applied Field ({self.h_unit})'
+            case 'MT': return 'Temperature (K)' 
+            case 'CHI': return 'Temperature (K)' 
+            case 'CP': return 'Temperature (K)'
+
+    @property
+    def ylabel(self):
+        match self.datatype:
+            case 'INS': return 'Intensity (arb. unit)'
+            case 'MH': return f'Magnetic moment ({self.mag_unit})'
+            case 'MT': return f'Magnetic moment ({self.mag_unit})'
+            case 'CHI': return f'Inverse Susceptibility (1/{self.chi_unit})' if self.invchi else f'Susceptibility ({self.chi_unit})'
+            case 'CP': return 'Magnetic Specific Heat (J/mol/K)'
+
 
 class DataCollection:
 
@@ -74,6 +146,9 @@ class DataCollection:
 
     def __len__(self):
         return len(self._datavec)
+
+    def __iter__(self):
+        return iter(self._keys)
 
     def max_x(self):
         return np.max([np.max(self._datavec[ii].x) for ii in range(self.nset)])
