@@ -98,6 +98,10 @@ def fitengy(**kwargs):
     if 'sym' in kwargs and len(set(kwargs.keys()).intersection(set(Blms))) == 0:
         # No parameters given, estimate using Monte Carlo sampling
         nz_pars = getSymmAllowedParam(kwargs['sym'])
+        if '2' in kwargs['sym'] and 'B66' not in nz_pars: # bug in Mantid
+            nz_pars += ['B66']
+            if any([kwargs['sym'] == val for val in ["C2", "Cs", "C2h"]]):
+                nz_pars += ['IB66']
         if J < 3:
             nz_pars = [v for v in nz_pars if 'B6' not in v]
         ebw = np.max(E0) - np.min(E0)
@@ -139,13 +143,19 @@ def fitengy(**kwargs):
     if len(E0) < len(Ecalc):
         #E = list(sorted(kwargs['E'])) + list(Ecalc[-(len(Ecalc)-len(E0)):]*(0.13*((100-num_iter)/100)+1) )
         # For each desired level, find nearest calculated level and substitute it for that
-        Eref, Enear = (Ecalc, [])
+        Eref = Ecalc
         E = copy.deepcopy(Ecalc)
-        for en in E0:
-            Idif = np.argmin(np.abs(Eref - en))
-            Enear.append(Eref[Idif])
-            E[np.argmin(np.abs(Ecalc - Eref[Idif]))] = en
-            Eref = np.delete(Eref, Idif)
+        if all(np.diff(E0) > 0): # If input has no degeneracies, account for degenerate levels
+            for en in E0:
+                Edif = np.abs(Eref - en)
+                idx = np.where(Edif == np.min(Edif))[0]
+                E[np.where((Ecalc-Eref[idx[0]])==0)] = en
+                Eref = np.delete(Eref, idx)
+        else:
+            for en in E0:
+                Idif = np.argmin(np.abs(Eref - en))
+                E[np.argmin(np.abs(Ecalc - Eref[Idif]))] = en
+                Eref = np.delete(Eref, Idif)
         E0 = E - np.mean(E)
     else:
         E0 = E0 - np.mean(E0)
@@ -161,7 +171,7 @@ def fitengy(**kwargs):
         V = np.asmatrix(vv)
         Ecalc = Ecalc - np.mean(Ecalc)
         newlsqfit = np.sum(np.power(Ecalc-E0,2))
-        if np.fabs(lsqfit - newlsqfit)<1.e-7:
+        if np.fabs(lsqfit - newlsqfit) < 1.e-7:
             break
         if newlsqfit > lsqfit:
             div_count += 1
@@ -377,10 +387,12 @@ def fit_widths(fitobj, retres=False, is_voigt=False, **kwargs):
         if is_voigt:
             for ii in range(npk):
                 yf += peakfun(x, pkl[0, ii], pkl[1, ii], pp[ii], pp[npk+ii])
+                scalfc = pp[-2]
         else:
             for ii in range(npk):
                 yf += peakfun(x, pkl[0, ii], pkl[1, ii], pp[ii])
-        yf = yf * pp[-2] + pp[-1]
+                scalfc = pp[-2] * 100
+        yf = yf * scalfc + pp[-1]
         if rr:
             return np.sum((y - yf)**2 / (e**2)), np.abs(y - yf)
         return np.sum((y - yf)**2 / (e**2))
@@ -434,7 +446,10 @@ def fit_widths(fitobj, retres=False, is_voigt=False, **kwargs):
         return chi2, np.array(resi)
     return chi2
 
-def fit_cef(fitobj, **kwargs):
+def fit_cef(fitobj, is_voigt=False, **kwargs):
+    origshape = fitobj.model.PeakShape
+    if is_voigt:
+        fitobj.model.PeakShape = 'Lorentzian'
     cfpars, cfobjs, peaks, intscal, origwidths = parse_cef_func(fitobj.model.function)
     p0, pnam, bnd = ([], [], [])
     norm = []
@@ -465,20 +480,22 @@ def fit_cef(fitobj, **kwargs):
                 bnd.append((-bv, bv))
     widths_kw = kwargs.pop('widths_kwargs', kwargs)
     chi2v = []
+    is_voigt = is_voigt or fitobj.model.PeakShape == 'PseudoVoigt'
     def minfun(p):
         for ky, vl in zip(pnam, p):
             fitobj.model[ky] = 0 if norm[ky] == 0 else vl / norm[ky]  # norm2stev
         for ky, vl in origwidths.items():
             fitobj.model[ky] = vl
         #print(fitobj.model.getEigenvalues())
-        chi2 = fit_widths(fitobj, **widths_kw)
+        chi2 = fit_widths(fitobj, is_voigt=is_voigt, **widths_kw)
         if len(chi2v) > 2 and chi2 < np.min(chi2v):
             mantid.simpleapi.CreateWorkspace(range(len(p)), p, OutputWorkspace='bestpars')
         chi2v.append(chi2)
-        try:
-            fitobj.fit()
-        except ValueError:
-            pass
+        if not is_voigt:
+            try:
+                fitobj.fit()
+            except ValueError:
+                pass
         if len(chi2v) < 2:
             chi2v.append(chi2)
         mantid.simpleapi.CreateWorkspace(range(len(chi2v)), chi2v, OutputWorkspace='chi2')
@@ -495,6 +512,8 @@ def fit_cef(fitobj, **kwargs):
         fitobj._fit_properties.pop('MaxIterations')
     # Update with best fit parameters
     minfun(res.x)
+    if is_voigt:
+        fitobj.model.PeakShape = origshape
     return res
 
 
