@@ -24,7 +24,7 @@ jobs:
       - uses: mamba-org/setup-micromamba@v1
       - name: Setup Mantid
         run: |
-          $MAMBA_EXE create -n cfutils -c mantid mantidworkbench
+          $MAMBA_EXE create -n cfutils -c mantid mantidworkbench mslice
       - name: Test
         run: |
           eval "$($MAMBA_EXE shell activate cfutils)"
