@@ -6,7 +6,12 @@ The state of the presenter can be de/serialised to json and represents the GUI s
 import numpy as np
 import scipy
 import os
+from scipy.optimize._minimize import MINIMIZE_METHODS
+import scipy.optimize
 from .dataset import Dataset, DataCollection
+
+GLOBAL_METHODS = [mt for mt in ['basinhopping', 'differential_evolution', 'shgo', 'dual_annealing', 'direct'] if hasattr(scipy.optimize, mt)]
+CURVEFIT_METHODS = ['lm', 'trf', 'dogbox']
 
 
 def _load_data(filename):
@@ -40,6 +45,10 @@ class CEFAnaTPresenter():
         for widg in ['ins', 'mh', 'mt', 'chi']:
             self.view.connect(f'datainput_{widg}unit', 'changed', self.on_data_unit_changed)
         self.view.connect('datainput_chiinv', 'clicked', self.on_data_chiinv_changed)
+        self.view.set_fit_local_minimizers(MINIMIZE_METHODS)
+        self.view.set_fit_global_minimizers(MINIMIZE_METHODS)
+        self.view.set_fit_global(GLOBAL_METHODS)
+        self.view.connect('fitlocalalgo', 'changed', self.on_fit_localalgo_changed)
 
     def on_load_data(self):
         if (loaded := self.view.get_file('Text (*.txt *.dat *.csv *.xye);; NeXus (*.nxs);; Matlab (*.mat)')):
@@ -80,3 +89,9 @@ class CEFAnaTPresenter():
         if self.view.is_noninteractive or self._current_data not in self.data:
             return
         self.data[self._current_data].invchi = ischecked
+
+    def on_fit_localalgo_changed(self, index):
+        if index == 0:
+            self.view.set_fit_local_minimizers(MINIMIZE_METHODS)
+        else:
+            self.view.set_fit_local_minimizers(CURVEFIT_METHODS)

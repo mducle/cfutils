@@ -135,7 +135,7 @@ class DataCollection:
 
     @property
     def nset(self):
-        return len(self._datavec)
+        return np.sum([1 for d in self._datavec if d.datatype == 'INS'])
 
     def __getitem__(self, ind):
         return self._datavec[ind] if isinstance(ind, int) else self._datavec[self._keys[ind]]
@@ -151,7 +151,7 @@ class DataCollection:
         return iter(self._keys)
 
     def max_x(self):
-        return np.max([np.max(self._datavec[ii].x) for ii in range(self.nset)])
+        return np.max([np.max(d.x) for d in self._datavec if d.datatype == 'INS'])
 
 """
     def get_data_from_workspace(self, InputWorkspace):

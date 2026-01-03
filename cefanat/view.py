@@ -54,7 +54,10 @@ def create_vertical_inputs(parent, spec):
             layout.addWidget(QLabel(inp[1]))
             inpwidget = inp[2](parent)
         elif 'single' in inp[0]:
-            inpwidget = inp[2](inp[1], parent)
+            if isinstance(inp[1], tuple):
+                inpwidget = inp[2](*inp[1])
+            else:
+                inpwidget = inp[2](inp[1], parent)
         else:
             raise RuntimeError(f'Input item type "{inp[0]}" not recognised')
         setattr(parent, inp[3], inpwidget)
@@ -393,9 +396,46 @@ class CEFAnaTView(QWidget):
             self.modelouterlayout.addWidget(self.modelinner[ii])
             self.modelouterlayout.setStretch(ii, stretchfac)
         self.modeltab.setLayout(self.modelouterlayout)
+
+    def set_fit_local_minimizers(self, minimizers):
+        [self.fitlocalmin.removeItem(0) for _ in range(self.fitlocalmin.count())]
+        [self.fitlocalmin.addItem(mn) for mn in minimizers]
+
+    def set_fit_global_minimizers(self, minimizers):
+        [self.fitglobalmin.addItem(mn) for mn in minimizers]
+
+    def set_fit_global(self, algos):
+        [self.fitglobalalgo.addItem(alg) for alg in algos]
         
     def drawfittab(self):
-        pass
+        self.fitinner, self.fitlayout = zip(*((QWidget(), QVBoxLayout()) for _ in range(2)))
+        self.fittabs = QTabWidget(self)
+        for names, prop in zip(['Local', 'Global', 'Search'], [
+                [['single', (self, ['minimize', 'curvefit'], 'Fit function'), RadioGroup, 'fitlocalalgo'], 
+                 ['pair', 'Minimizer', QComboBox, 'fitlocalmin']], 
+                [['pair', 'Algorithm', QComboBox, 'fitglobalalgo'], 
+                 ['pair', 'Local Minimizer', QComboBox, 'fitglobalmin']],
+                [['pair', 'Max energy splitting', QLineEdit, 'fitsearchmaxE']],
+            ]):
+            self.fittabs.addTab(create_vertical_inputs(self, prop), names)
+        self.fitobjective = RadioGroup(self, ['chi-sq', 'R-sq'], 'Objective')
+        self.fittype = RadioGroup(self, ['Fit CEF', 'Fit effective charges'], '')
+        self.fitbtn = QPushButton('Fit')
+        for widg in [self.fittabs, self.fitobjective, self.fittype, self.fitbtn]:
+            self.fitlayout[0].addWidget(widg)
+        self.fitlayout[0].addItem(QSpacerItem(0, 300))
+        self.fitfig = Figure()
+        self.fitcanvas = FigureCanvas(self.fitfig)
+        self.fitaxes = self.fitfig.add_subplot(111)
+        self.fitnav = NavigationToolbar(self.fitcanvas, self.fittab)
+        self.fitlayout[1].addWidget(self.fitnav)
+        self.fitlayout[1].addWidget(self.fitcanvas)
+        self.fitouterlayout = QHBoxLayout()
+        for ii, stretchfac in zip(range(2), [1, 4]):
+            self.fitinner[ii].setLayout(self.fitlayout[ii])
+            self.fitouterlayout.addWidget(self.fitinner[ii])
+            self.fitouterlayout.setStretch(ii, stretchfac)
+        self.fittab.setLayout(self.fitouterlayout)
 
     def drawlayout(self):
         self.mainlayout = QVBoxLayout()
