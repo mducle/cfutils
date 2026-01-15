@@ -1,17 +1,16 @@
 """
 Mantid engine class for the Crystal Electric Field Analysis Toolkit (CEFAnaT)
 """
-from .engine import EngineBase, BLMS
+from ..engine import EngineBase, BLMS
 import numpy as np
 
-MANTID_NOT_FOUND = False
-try:
-    import mantid.simpleapi as s_api
-except ModuleNotFoundError:
-    MANTID_NOT_FOUND = True
-    class CrystalField:
-        def __init__(self, *args, **kwargs): ...
-else:
+import mantid.simpleapi as s_api
+import CrystalField.fitting
+CrystalField.fitting.energies = CFEnergy
+from CrystalField import CrystalField
+from CrystalField.normalisation import split2range, _get_normalisation, ionname2Nre
+from CrystalField.fitting import getSymmAllowedParam, makeWorkspace
+from CrystalField.function import PhysicalProperties
 
 def CFEnergy(nre, **kwargs):
     from CrystalField.energies import _unpack_complex_matrix
@@ -29,15 +28,9 @@ def CFEnergy(nre, **kwargs):
     hamiltonian = _unpack_complex_matrix(cfe.getProperty('Hamiltonian').value, dim, dim)
     return eigenvalues, eigenvectors, hamiltonian
 
-if not MANTID_NOT_FOUND:
-    import CrystalField.fitting
-    CrystalField.fitting.energies = CFEnergy
-    from CrystalField import CrystalField
-    from CrystalField.normalisation import split2range, _get_normalisation, ionname2Nre
-    from CrystalField.fitting import getSymmAllowedParam, makeWorkspace
-    from CrystalField.function import PhysicalProperties
+class metaMantid(type(EngineBase), type(CrystalField)): ...
 
-class MantidEngine(EngineBase, CrystalField):
+class MantidEngine(EngineBase, CrystalField, metaclass=metaMantid):
 
     def __init__(self, Ion='Ce', Symmetry='C1', **kwargs):
         if MANTID_NOT_FOUND:
@@ -94,7 +87,7 @@ class MantidEngine(EngineBase, CrystalField):
         elif abs(hh[0]) < 1e-3:
             return self._calcSpectrum(fstr, xdat, 0)[1]
         else:
-            return _calcpppowder(hh[0]) if 'powder' in hdir else return _calcpphext(hh[0], hdir)
+            return _calcpppowder(hh[0]) if 'powder' in hdir else _calcpphext(hh[0], hdir)
 
     def fitengy(self, evec, random_start=False):
         """Uses the Newman-Ng algorithm to fit a set of crystal field parameters to a level scheme."""

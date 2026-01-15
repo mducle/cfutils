@@ -22,6 +22,9 @@ class Dataset:
         self.raw = raw
         self.datatype = 'INS'
         self.Hdir = 'powder'
+        self.peaks_guess = None
+        self.peaks_par = None
+        self.peaks_trace = None
 
     @property
     def array(self):
@@ -50,7 +53,7 @@ class Dataset:
     
     @property
     def xye(self):
-        return self.array[:, self.xyeind()]
+        return self.array[:, self.xyeind]
 
     @property
     def x(self):

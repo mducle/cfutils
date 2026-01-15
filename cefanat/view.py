@@ -10,9 +10,10 @@ from qtpy.QtCore import QEventLoop, Qt, QProcess, Signal, QAbstractTableModel  #
 from qtpy.QtWidgets import (QAction, QCheckBox, QComboBox, QDialog, QFileDialog, QGridLayout, QHBoxLayout, QMenu, QLabel,
                             QLineEdit, QMainWindow, QMessageBox, QPushButton, QSizePolicy, QSpacerItem, QTabWidget,
                             QGroupBox, QRadioButton, QStackedWidget, QTextEdit, QVBoxLayout, QListWidget, QWidget,
-                            QTableWidget, QTableWidgetItem)  # noqa
+                            QTableWidget, QTableWidgetItem, QActionGroup)  # noqa
 from matplotlib.figure import Figure
 from matplotlib.widgets import Slider
+from matplotlib.backend_bases import MouseButton
 
 try:
     from mantid.plots.utility import legend_set_draggable
@@ -63,6 +64,7 @@ def create_vertical_inputs(parent, spec):
         setattr(parent, inp[3], inpwidget)
         layout.addWidget(inpwidget)
     widget = QWidget(parent)
+    layout.setAlignment(Qt.AlignTop)
     widget.setLayout(layout)
     return widget
 
@@ -273,15 +275,22 @@ class CEFAnaTView(QWidget):
             case 'mat':
                 self.datadispstack.setCurrentIndex(2)
         self.reset_data_meta(data)
+        self.datatoolsaddpk.setEnabled(data.datatype == 'INS')
+        self.datatoolsfitpk.setEnabled(data.peaks_guess is not None)
         if data.array is not None:
             self.plot_data(data)
 
     def plot_data(self, data):
+        self.datatoolsfitpk.setEnabled(data.peaks_guess is not None)
         self.dataaxes.cla()
         if data.array.shape[1] > 2:
-            self.dataaxes.errorbar(data.x, data.y, data.e, fmt='o')
+            self.dataaxes.errorbar(data.x, data.y, data.e, fmt='ob')
         else:
-            self.dataaxes.plot(data.x, data.y, 'o')
+            self.dataaxes.plot(data.x, data.y, 'ob')
+        if data.peaks_guess is not None:
+            self.dataaxes.plot(data.peaks_guess[:,0], data.peaks_guess[:,1], 'sr', markersize=10)
+        if data.peaks_trace is not None:
+            self.dataaxes.plot(data.x, data.peaks_trace, '-k')
         self.dataaxes.set_xlabel(data.xlabel)
         self.dataaxes.set_ylabel(data.ylabel)
         self.datacanvas.draw()
@@ -305,8 +314,13 @@ class CEFAnaTView(QWidget):
     def set_current_data(self, index):
         self.datalist.setCurrentRow(index)
 
+    def get_peaks(self):
+        self.datatoolsaddpk.setText('Right click to stop')
+        coords = self.datafig.ginput(-1, mouse_pop=None, mouse_stop=MouseButton.RIGHT)
+        self.datatoolsaddpk.setText('Define peaks')
+        return coords
+
     def drawdatatab(self):
-        self.datalayout = QGridLayout()
         self.dataloadbtn = QPushButton("Load Data")
         self.datalist = QListWidget(self.datatab)
         self.datafig = Figure()
@@ -319,12 +333,22 @@ class CEFAnaTView(QWidget):
         self.datadisplay.addTab(self.datadispstack, 'Data')
         self.dataaxes = self.datafig.add_subplot(111)
         self.datatools = QWidget()
+        datatools1 = QWidget()
         self.datatoolsnav = NavigationToolbar(self.datacanvas, self.datatab)
-        self.datatoolsswitch = QPushButton('Switch to tiles')
-        toollayout = QHBoxLayout()
-        toollayout.addWidget(self.datatoolsnav)
-        toollayout.addWidget(self.datatoolsswitch)
-        self.datatools.setLayout(toollayout)
+        self.datatoolsswitch = QPushButton('Switch to tiles', enabled=False)
+        toollayout1 = QHBoxLayout()
+        toollayout1.addWidget(self.datatoolsnav)
+        toollayout1.addWidget(self.datatoolsswitch)
+        datatools1.setLayout(toollayout1)
+        datatools2 = QWidget()
+        self.datatoolsaddpk = QPushButton('Define peaks', enabled=False)
+        self.datatoolsfitpk = QPushButton('Fit peaks', enabled=False)
+        self.datatoolspk2cf = QPushButton('Peaks to Blm', enabled=False)
+        toollayout2 = QHBoxLayout()
+        toollayout2.addWidget(self.datatoolsaddpk)
+        toollayout2.addWidget(self.datatoolsfitpk)
+        toollayout2.addWidget(self.datatoolspk2cf)
+        datatools2.setLayout(toollayout2)
         self.dataprops = QWidget()
         self.datatype = RadioGroup(self, ['INS', 'M(H)', 'M(T)', 'chi(T)', 'Cp(T)'], 'Data type')
         self.datapropstack = QStackedWidget(self.datatab)
@@ -354,12 +378,20 @@ class CEFAnaTView(QWidget):
         propslayout.addWidget(self.datapropstack)
         propslayout.addWidget(self.dataedit)
         self.dataprops.setLayout(propslayout)
-        self.datalayout.addWidget(self.dataloadbtn, 0, 0)
-        self.datalayout.addWidget(self.datalist, 1, 0)
-        self.datalayout.addWidget(self.datatools, 0, 1)
-        self.datalayout.addWidget(self.datadisplay, 1, 1)
-        self.datalayout.addWidget(self.dataprops, 0, 2, -1, 1)
-        self.datatab.setLayout(self.datalayout)
+        datalayout = QHBoxLayout()
+        datalayoutc1, datalayoutc2 = (QVBoxLayout() for _ in range(2))
+        datac1, datac2 = (QWidget() for _ in range(2))
+        datalayoutc1.addWidget(self.dataloadbtn)
+        datalayoutc1.addWidget(self.datalist)
+        datac1.setLayout(datalayoutc1)
+        datalayoutc2.addWidget(datatools1)
+        datalayoutc2.addWidget(datatools2)
+        datalayoutc2.addWidget(self.datadisplay)
+        datac2.setLayout(datalayoutc2)
+        datalayout.addWidget(datac1)
+        datalayout.addWidget(datac2)
+        datalayout.addWidget(self.dataprops)
+        self.datatab.setLayout(datalayout)
 
     def drawmodeltab(self):
         self.modelouterlayout = QHBoxLayout()
@@ -376,7 +408,8 @@ class CEFAnaTView(QWidget):
                 ['single', 'Browse', QPushButton, 'modelinputcifbrowse'],
                 ['single', 'Load', QPushButton, 'modelinputcifload'], ['spacer', 250]]),
             create_vertical_inputs(self, [
-                ['pair', 'Energy Levels', QLineEdit, 'modelinputenergies'],
+                ['pair', 'Energy Levels (comma separated list)', QLineEdit, 'modelinputenergies'],
+                ['pair', 'Point Symmetry', QLineEdit, 'modelinputensym'],
                 ['single', 'Compute', QPushButton, 'modelinputencompute'], ['spacer', 300]])
             ]:
             self.modeltypestack.addWidget(prop)
@@ -447,14 +480,37 @@ class CEFAnaTView(QWidget):
         self.mainlayout.addWidget(self.tabs)
         self.setLayout(self.mainlayout)
 
+    def set_engines(self, engines):
+        self.engines = []
+        self.enginegroup = QActionGroup(self.setengine)
+        for eng in engines:
+            actionitem = QAction(eng, self.setengine, checkable=True)
+            self.engines.append([eng, actionitem])
+            self.enginegroup.addAction(actionitem)
+            self.setengine.addAction(actionitem)
+
+    def set_calc_engine(self, engine):
+        for eng in self.engines:
+            if eng[0] == engine:
+                eng[1].setChecked(True)
+                break
+
+    def get_engine_name(self, engineobj):
+        for eng in self.engines:
+            if eng[1] == engineobj:
+                return eng[0]
+
 
 def setup_menu(mainwindow, mainview):
     for menu in [['File', [["Load data", 'loaddat'], ["Load model", 'loadmodel'], ["Save model", 'savemodel']]],
-                 ['Options', [['Set calculation engine', 'setengine']]]]:
+                 ['Options', [['menu', 'Set calculation engine', 'setengine']]]]:
         menuitem = QMenu(menu[0])
         setattr(mainview, f'menu{menu[0]}', menuitem)
         for act in menu[1]:
-            actionitem = QAction(act[0], menuitem)
-            menuitem.addAction(actionitem)
-            setattr(mainview, act[1], actionitem)
+            if act[0] == 'menu':
+                actionitem = menuitem.addMenu(act[1])
+            else:
+                actionitem = QAction(act[0], menuitem)
+                menuitem.addAction(actionitem)
+            setattr(mainview, act[-1], actionitem)
         mainwindow.menuBar().addMenu(menuitem)

@@ -16,7 +16,7 @@ class EngineFactory():
 
     @classmethod
     def list(cls):
-        return cls._engines.keys()
+        return list(cls._engines.keys())
     
     @classmethod
     def get(cls, engine_name):
