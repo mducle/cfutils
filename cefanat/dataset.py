@@ -23,6 +23,7 @@ class Dataset:
         self.datatype = 'INS'
         self.Hdir = 'powder'
         self.peaks_guess = None
+        self.peaks_guesswidths = None
         self.peaks_par = None
         self.peaks_trace = None
 

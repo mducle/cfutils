@@ -77,13 +77,14 @@ class MantidEngine(EngineBase, CrystalField, metaclass=metaMantid):
         """Returns the magnetic specific heat at constant volume at a set of temperatures and fields as a numpy array"""
         tt, hh = (np.squeeze(np.array(temperature)), np.squeeze(np.array(field)))
         fstr = self.makePhysicalPropertiesFunction(PhysicalProperties('Cp'))
-        xdat = makeWorkspace(tt, tt*0)
+        xdat, rv = (makeWorkspace(tt, tt*0), [])
         def _calcpphext(hmag, hdir):
             return self._calcSpectrum(fstr + ','.join([f'Bext{d}=m' for d,m in zip(['X', 'Y', 'Z'], np.array(hdir)*hmag)]), xdat, 0)[1]
         def _calcpppowder(hmag):
             return np.sum([_calcpphext(hmag, hd) for hd in [[0,0,1], [0,1,0], [1,0,0]]], axis=0)
         if len(hh) > 0:
-            ...
+            for hv in hh:
+                rv.append(_calcpppowder(hv) if 'powder' in hdir else _calcpphext(hv, hdir))
         elif abs(hh[0]) < 1e-3:
             return self._calcSpectrum(fstr, xdat, 0)[1]
         else:
