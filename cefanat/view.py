@@ -10,7 +10,7 @@ from qtpy.QtCore import QEventLoop, Qt, QProcess, Signal, QAbstractTableModel  #
 from qtpy.QtWidgets import (QAction, QCheckBox, QComboBox, QDialog, QFileDialog, QGridLayout, QHBoxLayout, QMenu, QLabel,
                             QLineEdit, QMainWindow, QMessageBox, QPushButton, QSizePolicy, QSpacerItem, QTabWidget,
                             QGroupBox, QRadioButton, QStackedWidget, QTextEdit, QVBoxLayout, QListWidget, QWidget,
-                            QTableWidget, QTableWidgetItem, QActionGroup)  # noqa
+                            QTableWidget, QTableWidgetItem, QActionGroup, QStatusBar)  # noqa
 from matplotlib.figure import Figure
 from matplotlib.widgets import Slider
 from matplotlib.backend_bases import MouseButton
@@ -289,6 +289,10 @@ class CEFAnaTView(QWidget):
             self.dataaxes.plot(data.x, data.y, 'ob')
         if data.peaks_guess is not None:
             self.dataaxes.plot(data.peaks_guess[:,0], data.peaks_guess[:,1], 'sr', markersize=10)
+        if data.peaks_guesswidths is not None:
+            yy = np.array([[y0/2, y0/2, np.nan] for y0 in data.peaks_guess[:,1]]).ravel()
+            xx = np.array([[x0-0.5*w, x0+0.5*w, np.nan] for x0, w in zip(data.peaks_guess[:,0], data.peaks_guesswidths)]).ravel()
+            self.dataaxes.plot(xx, yy, '-r')
         if data.peaks_trace is not None:
             self.dataaxes.plot(data.x, data.peaks_trace, '-k')
         self.dataaxes.set_xlabel(data.xlabel)
@@ -315,10 +319,22 @@ class CEFAnaTView(QWidget):
         self.datalist.setCurrentRow(index)
 
     def get_peaks(self):
-        self.datatoolsaddpk.setText('Right click to stop')
+        self.display_status('Left click on peak to add. Middle click to remove previous peak. Right click to stop')
         coords = self.datafig.ginput(-1, mouse_pop=None, mouse_stop=MouseButton.RIGHT)
-        self.datatoolsaddpk.setText('Define peaks')
+        self.clear_status()
         return coords
+
+    def display_status(self, message):
+        self.statusbar.setStyleSheet('color: black')
+        self.statusbar.showMessage(message)
+
+    def display_error(self, message):
+        self.statusbar.setStyleSheet('color: red')
+        self.statusbar.showMessage(message)
+
+    def clear_status(self):
+        self.statusbar.setStyleSheet('color: black')
+        self.statusbar.clearMessage()
 
     def drawdatatab(self):
         self.dataloadbtn = QPushButton("Load Data")
@@ -514,3 +530,5 @@ def setup_menu(mainwindow, mainview):
                 menuitem.addAction(actionitem)
             setattr(mainview, act[-1], actionitem)
         mainwindow.menuBar().addMenu(menuitem)
+    mainview.statusbar = QStatusBar(mainwindow)
+    mainwindow.setStatusBar(mainview.statusbar)

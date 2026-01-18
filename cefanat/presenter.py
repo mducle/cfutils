@@ -7,6 +7,7 @@ import numpy as np
 import scipy
 import os
 import importlib
+import traceback
 from scipy.optimize._minimize import MINIMIZE_METHODS
 import scipy.optimize
 from .dataset import Dataset
@@ -39,6 +40,16 @@ def _load_data(filename):
         case '.mat':
             return name, Dataset(None, None, intype='mat')
 
+    
+def display_error(func):
+    def inner(self, *args, **kwargs):
+        try:
+            func(self, *args, **kwargs)
+        except Exception as e:
+            print(traceback.format_exc())
+            self.view.display_error(e.message if hasattr(e, 'message') else str(e))
+    return inner 
+
 
 class CEFAnaTPresenter():
 
@@ -68,8 +79,8 @@ class CEFAnaTPresenter():
         self.view.set_calc_engine(self.calc_engine)
         self.view.connect('enginegroup', 'triggered', self.on_engine_change)
 
-
-    def on_load_data(self):
+    @display_error
+    def on_load_data(self, ischecked):
         if (loaded := self.view.get_file('Text (*.txt *.dat *.csv *.xye);; NeXus (*.nxs);; Matlab (*.mat)')):
             for f in loaded:
                 name, entry = _load_data(f)
@@ -78,49 +89,59 @@ class CEFAnaTPresenter():
             if len(self.fit.data) > 0:
                 self.view.set_current_data(len(self.fit.data) - 1)
 
+    @display_error
     def on_change_data(self, current, previous):
         self.fit.set_current_data(current)
         self.view.update_data(self.fit.get_current_data())
 
+    @display_error
     def on_data_col_changed(self, d_ind, value):
         self.fit.update_data_columns(value, d_ind)
         self.view.update_data(self.fit.get_current_data())
 
+    @display_error
     def on_data_type_changed(self, ind):
         if self.view.is_noninteractive or not self.fit.is_current_data_valid():
             return
         self.fit.set_current_data_type_index(ind)
         self.view.update_data(self.fit.get_current_data())
 
+    @display_error
     def on_data_unit_changed(self, ind):
         if self.view.is_noninteractive or not self.fit.is_current_data_valid():
             return
         self.fit.set_current_data_unit_index(ind)
         self.view.plot_data(self.fit.get_current_data())
 
+    @display_error
     def on_data_edit_finished(self, widg, prop):
         if self.view.is_noninteractive or not self.fit.is_current_data_valid():
             return
         self.fit.set_current_data_property(prop, getattr(self.view, f'datainput_{widg}').text())
         
+    @display_error
     def on_data_chiinv_changed(self, ischecked):
         if self.view.is_noninteractive or not self.fit.is_current_data_valid():
             return
         self.fit.set_current_data_invchi(ischecked)
 
+    @display_error
     def on_fit_localalgo_changed(self, index):
         if index == 0:
             self.view.set_fit_local_minimizers(MINIMIZE_METHODS)
         else:
             self.view.set_fit_local_minimizers(CURVEFIT_METHODS)
 
-    def on_data_add_peak(self):
+    @display_error
+    def on_data_add_peak(self, ischecked):
         self.fit.set_current_data_peaks_guess(np.array(self.view.get_peaks()))
         self.view.plot_data(self.fit.get_current_data())
 
-    def on_data_fit_peak(self):
+    @display_error
+    def on_data_fit_peak(self, ischecked):
         self.fit.fit_current_data_peaks()
         self.view.plot_data(self.fit.get_current_data())
 
+    @display_error
     def on_engine_change(self, engineobj):
         self.calc_engine = self.view.get_engine_name(engineobj)
