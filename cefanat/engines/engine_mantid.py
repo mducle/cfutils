@@ -3,17 +3,15 @@ Mantid engine class for the Crystal Electric Field Analysis Toolkit (CEFAnaT)
 """
 from ..engine import EngineBase, BLMS
 import numpy as np
-
 import mantid.simpleapi as s_api
-import CrystalField.fitting
-CrystalField.fitting.energies = CFEnergy
-from CrystalField import CrystalField
-from CrystalField.normalisation import split2range, _get_normalisation, ionname2Nre
-from CrystalField.fitting import getSymmAllowedParam, makeWorkspace
-from CrystalField.function import PhysicalProperties
+
+def _unpack_complex_matrix(packed, nr, nc):
+    unpacked = np.ndarray((nr, nc), dtype=complex)
+    for ij, k in zip([[i,j] for i in range(nr) for j in range(nc)], range(0,2*nr*nc,2)):
+        unpacked[i, j] = complex(packed[k], packed[k + 1])
+    return unpacked
 
 def CFEnergy(nre, **kwargs):
-    from CrystalField.energies import _unpack_complex_matrix
     cfe = s_api.AlgorithmManager.create('CrystalFieldEnergies')
     cfe.initialize()
     cfe.setChild(True)
@@ -27,6 +25,13 @@ def CFEnergy(nre, **kwargs):
     eigenvectors = _unpack_complex_matrix(cfe.getProperty('Eigenvectors').value, dim, dim)
     hamiltonian = _unpack_complex_matrix(cfe.getProperty('Hamiltonian').value, dim, dim)
     return eigenvalues, eigenvectors, hamiltonian
+
+import CrystalField.fitting
+CrystalField.fitting.energies = CFEnergy
+from CrystalField import CrystalField
+from CrystalField.normalisation import split2range, _get_normalisation, ionname2Nre
+from CrystalField.fitting import getSymmAllowedParam, makeWorkspace
+from CrystalField.function import PhysicalProperties
 
 class metaMantid(type(EngineBase), type(CrystalField)): ...
 

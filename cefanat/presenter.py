@@ -10,6 +10,7 @@ import importlib
 import traceback
 from scipy.optimize._minimize import MINIMIZE_METHODS
 import scipy.optimize
+import h5py
 from .dataset import Dataset
 from .fit import Fit
 from .engine import EngineFactory
@@ -27,6 +28,13 @@ if len(EngineFactory.list())==0:
     raise RuntimeError('No calculation engine found! Please install either Mantid or libMcPhase')
 
 
+def _recursive_parse_nxs(nxfield):
+    if hasattr(nxfield, 'keys'):
+        return {k:_recursive_parse_nxs(nxfield[k]) for k in nxfield.keys()}
+    else:
+        return None
+
+
 def _load_data(filename):
     extras = {}
     name = os.path.splitext(os.path.basename(filename))[0]
@@ -36,9 +44,28 @@ def _load_data(filename):
                 raw = f.read()
             return name, Dataset(np.loadtxt(raw.splitlines()), raw, intype='text')
         case '.nxs':
-            return name, Dataset(None, None, intype='nxs')
+            rawdic, dat, datargs = ({'filename':filename}, None, {})
+            with h5py.File(filename, 'r') as f:
+                rawdic['root'] = _recursive_parse_nxs(f)
+                if 'mantid_workspace_1' in rawdic['root'] and 'workspace' in rawdic['root']['mantid_workspace_1']:
+                    dset, axs = (f['mantid_workspace_1']['workspace'], ['axis1', 'values', 'errors'])
+                    try:
+                        x, y, e = (dset[fl] for fl in axs)
+                    except KeyError:
+                        pass
+                    else:
+                        if x.size == y.size + 1:
+                            dat = np.array([(dset['axis1'][1:]+dset['axis1'][:-1])/2, np.squeeze(dset['values']), np.squeeze(dset['errors'])])
+                        else:
+                            dat = np.array([np.squeeze(dset[v]) for v in axs])
+                        datargs = {f'{k}_ind':f'mantid_workspace_1/workspace/{v}' for k, v in zip(['x', 'y', 'e'], axs)}
+            return name, Dataset(dat, rawdic, intype='nxs', **datargs)
         case '.mat':
-            return name, Dataset(None, None, intype='mat')
+            md, dat, datargs = (scipy.io.loadmat(filename), None, {})
+            if all([c in md.keys() for c in ['x', 'y', 'e']]) and (len(md['x']) == len(md['y'])) and (len(md['x']) == len(md['e'])):
+                dat = np.concatenate((md['x'], md['y'], md['e']))  # MSlice saved file
+                datargs = {'x_ind':'x', 'y_ind':'y', 'e_ind':'e'}
+            return name, Dataset(dat, md, intype='mat', **datargs)
 
     
 def display_error(func):

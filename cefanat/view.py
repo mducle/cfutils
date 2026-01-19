@@ -10,7 +10,7 @@ from qtpy.QtCore import QEventLoop, Qt, QProcess, Signal, QAbstractTableModel  #
 from qtpy.QtWidgets import (QAction, QCheckBox, QComboBox, QDialog, QFileDialog, QGridLayout, QHBoxLayout, QMenu, QLabel,
                             QLineEdit, QMainWindow, QMessageBox, QPushButton, QSizePolicy, QSpacerItem, QTabWidget,
                             QGroupBox, QRadioButton, QStackedWidget, QTextEdit, QVBoxLayout, QListWidget, QWidget,
-                            QTableWidget, QTableWidgetItem, QActionGroup, QStatusBar)  # noqa
+                            QTableWidget, QTableWidgetItem, QActionGroup, QStatusBar, QTreeWidget, QTreeWidgetItem)  # noqa
 from matplotlib.figure import Figure
 from matplotlib.widgets import Slider
 from matplotlib.backend_bases import MouseButton
@@ -55,13 +55,15 @@ def create_vertical_inputs(parent, spec):
             layout.addWidget(QLabel(inp[1]))
             inpwidget = inp[2](parent)
         elif 'single' in inp[0]:
-            if isinstance(inp[1], tuple):
+            if len(inp) == 3:
+                inpwidget = inp[1](parent)
+            elif isinstance(inp[1], tuple):
                 inpwidget = inp[2](*inp[1])
             else:
                 inpwidget = inp[2](inp[1], parent)
         else:
             raise RuntimeError(f'Input item type "{inp[0]}" not recognised')
-        setattr(parent, inp[3], inpwidget)
+        setattr(parent, inp[-1], inpwidget)
         layout.addWidget(inpwidget)
     widget = QWidget(parent)
     layout.setAlignment(Qt.AlignTop)
@@ -239,14 +241,42 @@ class CEFAnaTView(QWidget):
                 self.textdatatable.setItem(i+1, j, QTableWidgetItem(f'{textdata[i,j]}'))
         self.textdatacombos = ExclusiveComboHeaders(self.textdatatable, self, xyeind)
         
+    def _setupdata_mat_nxs_widget(self, fmt):
+        rv, ly = (QWidget(self), QHBoxLayout())
+        datatable = create_vertical_inputs(self, 
+            [['single', QTreeWidget, f'{fmt}datatree'], ['single', QTableWidget, f'{fmt}datatable']])
+        fieldsinput = create_vertical_inputs(self,
+            [['pair', f'{c} field name', QLineEdit, f'{fmt}data{c}'] for c in ['x', 'y', 'e']])
+        ly.addWidget(datatable)
+        ly.addWidget(fieldsinput)
+        rv.setLayout(ly)
+        return rv
+
     def _setupdata_nxs_widget(self):
-        return QLabel('nxs')
+        return self._setupdata_mat_nxs_widget('nxs')
+
+    def set_nxs_data(self, nxsdic, xyeind):
+        [getattr(self, f'nxsdata{c}').setText(v) for c, v in zip (['x', 'y', 'e'], xyeind)]
+        self.nxsdatatree.clear()
+        def _addtreeitem(parent, txt):
+            itm = QTreeWidgetItem(parent)
+            itm.setText(0, txt)
+            return itm
+        def _gen_leaf(dic, parent):
+            return None if dic is None else [_gen_leaf(dic[k], _addtreeitem(parent, k)) for k in dic.keys()]
+        _gen_leaf(nxsdic['root'], self.nxsdatatree)
 
     def _setupdata_mat_widget(self):
-        return QLabel('mat')
+        return self._setupdata_mat_nxs_widget('mat')
+
+    def set_mat_data(self, matdic, xyeind):
+        [getattr(self, f'matdata{c}').setText(v) for c, v in zip (['x', 'y', 'e'], xyeind)]
+        self.matdatatree.clear()
+        for k in matdic.keys():
+            itm = QTreeWidgetItem(self.matdatatable)
+            itm.setText(0, k)
 
     def reset_data_meta(self, data=None):
-        self.is_noninteractive = True
         for widg in ['datatype', '_insunit', '_mhunit', '_mtunit', '_chiunit']:
             getattr(self, f'datainput{widg}' if widg.startswith('_') else widg).setSelectedIndex(0)
         for widg in ['instt', 'insEi', 'insH', 'mhtt', 'mth', 'cph', 'insHdir', 'mthdir', 'cphdir']:
@@ -263,22 +293,25 @@ class CEFAnaTView(QWidget):
                 getattr(self, f'datainput_{wg}').setText(str(getattr(data, prp)))
             if data.datatype == 'CHI':
                 self.datainput_chiinv.setChecked(data.invchi)
-        self.is_noninteractive = False
 
     def update_data(self, data):
+        self.is_noninteractive = True
         match data.inputtype:
             case 'text':
                 self.datadispstack.setCurrentIndex(0)
                 self.set_text_data(data.array, data.raw, data.xyeind)
             case 'nxs':
                 self.datadispstack.setCurrentIndex(1)
+                self.set_nxs_data(data.raw, data.xyeind)
             case 'mat':
                 self.datadispstack.setCurrentIndex(2)
+                self.set_mat_data(data.raw, data.xyeind)
         self.reset_data_meta(data)
         self.datatoolsaddpk.setEnabled(data.datatype == 'INS')
         self.datatoolsfitpk.setEnabled(data.peaks_guess is not None)
         if data.array is not None:
             self.plot_data(data)
+        self.is_noninteractive = False
 
     def plot_data(self, data):
         self.datatoolsfitpk.setEnabled(data.peaks_guess is not None)

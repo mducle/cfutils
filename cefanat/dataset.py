@@ -38,15 +38,16 @@ class Dataset:
         else:
             self._array = np.array(value)
             assert len(self._array.shape) == 2, 'Input array must be a 2D, n-by-2 or n-by-3 array'
-        if self._array.shape[0] < 4 and self.array.shape[1] > self.array.shape[0]:
-            self._array = self.array.T
-        assert min(self._array.shape) > 1, 'Input must be an n-by-m array, with m >= 2'
-        if self._array.shape[1] == 2:
-            self.e_ind = None
-        if self.x_ind > self.array.shape[1]:
-            self.x_ind = 0
-        if self.y_ind > self.array.shape[1] or self.y_ind == self.x_ind:
-            self.y_ind = 1
+            if self._array.shape[0] < 4 and self.array.shape[1] > self.array.shape[0]:
+                self._array = self.array.T
+            assert min(self._array.shape) > 1, 'Input must be an n-by-m array, with m >= 2'
+            if self._array.shape[1] == 2:
+                self.e_ind = None
+            if not isinstance(self.x_ind, str):
+                if self.x_ind > self.array.shape[1]:
+                    self.x_ind = 0
+                if self.y_ind > self.array.shape[1] or self.y_ind == self.x_ind:
+                    self.y_ind = 1
 
     @property
     def xyeind(self):
@@ -54,19 +55,23 @@ class Dataset:
     
     @property
     def xye(self):
-        return self.array[:, self.xyeind]
+        if isinstance(self.x_ind, str):
+            return self.array[:, [0, 1] if self.e_ind is None else [0, 1, 2]]
+        else:
+            return self.array[:, [self.x_ind, self.y_ind] if self.e_ind is None else self.xyeind]
 
     @property
     def x(self):
-        return self.array[:, self.x_ind]
+        return self.array[:, 0 if isinstance(self.x_ind, str) else self.x_ind]
 
     @property
     def y(self):
-        return self.array[:, self.y_ind]
+        return self.array[:, 1 if isinstance(self.x_ind, str) else self.y_ind]
 
     @property
     def e(self):
-        return self.array[:, self.e_ind] if self.e_ind else []
+        e_ind = 2 if isinstance(self.x_ind, str) else self.e_ind
+        return [] if e_ind is None else self.array[:, e_ind]
 
     @property
     def datatype(self):
