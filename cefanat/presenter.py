@@ -97,7 +97,10 @@ class CEFAnaTPresenter():
             self.view.connect(f'datainput_{widg}unit', 'changed', self.on_data_unit_changed)
         self.view.connect('datainput_chiinv', 'clicked', self.on_data_chiinv_changed)
         self.view.connect('datatoolsaddpk', 'clicked', self.on_data_add_peak)
+        self.view.connect('datatoolsmodpk', 'clicked', self.on_data_mod_peak)
         self.view.connect('datatoolsfitpk', 'clicked', self.on_data_fit_peak)
+        self.view.connect('datatoolsfitel', 'clicked', self.on_data_fit_elastic)
+        self.view.connect('datatoolsdefel', 'clicked', self.on_data_define_elastic)
         self.view.set_fit_local_minimizers(MINIMIZE_METHODS)
         self.view.set_fit_global_minimizers(MINIMIZE_METHODS)
         self.view.set_fit_global(GLOBAL_METHODS)
@@ -161,12 +164,26 @@ class CEFAnaTPresenter():
 
     @display_error
     def on_data_add_peak(self, ischecked):
-        self.fit.set_current_data_peaks_guess(np.array(self.view.get_peaks()))
+        self.fit.set_current_data_peaks_guess(np.array(self.view.guess_peaks()))
         self.view.plot_data(self.fit.get_current_data())
+
+    @display_error
+    def on_data_mod_peak(self, ischecked):
+        self.view.mod_peak(self.fit.get_current_data())
 
     @display_error
     def on_data_fit_peak(self, ischecked):
         self.fit.fit_current_data_peaks()
+        self.view.plot_data(self.fit.get_current_data())
+
+    @display_error
+    def on_data_define_elastic(self, ischecked):
+        self.fit.set_current_data_elastic_guess(np.array(self.view.guess_peaks(elastic=True)))
+        self.view.plot_data(self.fit.get_current_data())
+
+    @display_error
+    def on_data_fit_elastic(self, ischecked):
+        self.fit.fit_current_data_elastic()
         self.view.plot_data(self.fit.get_current_data())
 
     @display_error

@@ -17,12 +17,25 @@ def lorz(x, cen, area, fwhm):
 def voigt(x, cen, area, fwhm, frac=0.5):
     x = np.array(x)
     flgt = 4 * np.log(2)
+    frac = max(0, min(frac, 1))
     return (area/fwhm) / (frac*np.pi/2 + (1-frac)*np.sqrt(np.pi / flgt)) \
         * (frac/(1 + 4*((x - cen)/fwhm)**2) + (1-frac)*np.exp(-flgt*((x - cen)/fwhm)**2))
 
 
+def specfun(xdat, *pp, peakfun):
+    np_per_pk = 4 if peakfun == voigt else 3
+    npk = int(len(pp) / np_per_pk)
+    ycalc = xdat*0
+    for pk in range(npk):
+        i0 = pk * np_per_pk
+        ycalc += peakfun(xdat, *pp[i0:i0+np_per_pk])
+    if len(pp) > npk * np_per_pk:
+        ycalc += pp[-2] * xdat + pp[-1]
+    return ycalc
+
+
 def get_pk_init(x, y, cc, peakfun):
-    hh = (cc[1] - np.min(y)) / 1.5  # Makes peaks narrower otherwise could get flat lines
+    hh = (cc[1] - np.nanmin(y)) / 1.5  # Makes peaks narrower otherwise could get flat lines
     x0 = np.argmin(np.abs(x - cc[0]))
     # Heuristic 1: finds width at half height
     xl = np.where(y[:x0] < hh)[0]
@@ -36,6 +49,7 @@ def get_pk_init(x, y, cc, peakfun):
     if peakfun == voigt:
         return [cc[0], cc[1] * fwhm / 2, fwhm, 0.5]
     return [cc[0], cc[1] * fwhm / 2, fwhm]
+
 
 class Fit():
 
@@ -73,25 +87,39 @@ class Fit():
         self.data[self._current_data].invchi = ischecked
 
     def set_current_data_peaks_guess(self, peaks):
-        [setattr(self.data[self._current_data], p, None) for p in ['peaks_par', 'peaks_trace', 'peaks_guess', 'peaks_guesswidths']]
+        self.data[self._current_data].peaks = {k:None for k in ['guess', 'widths', 'par', 'trace']}
         if len(peaks) > 0:
             data = self.data[self._current_data]
-            self.data[self._current_data].peaks_guess = peaks
-            self.data[self._current_data].peaks_guesswidths = [get_pk_init(data.x, data.y, cc, gauss)[2] for cc in peaks]
+            self.data[self._current_data].peaks['guess'] = peaks
+            self.data[self._current_data].peaks['widths'] = [get_pk_init(data.x, data.y, cc, gauss)[2] for cc in peaks]
+
+    def set_current_data_elastic_guess(self, cc):
+        self.data[self._current_data].elastic = {k:None for k in ['guess', 'par', 'trace']}
+        if cc.shape[0] > 0:
+            x, y = (getattr(self.data[self._current_data], col) for col in ['x', 'y'])
+            if cc.shape[0] > 2:
+                fwhm = np.abs(cc[1,0] - cc[2,0])
+                p0 = [cc[0,0], cc[1,0] * fwhm / 2, fwhm]
+            else:
+                p0 = get_pk_init(x, y, cc[0,:], voigt)
+            self.data[self._current_data].elastic['guess'] = np.array(p0 + [0.01, np.nanmin(x)])
 
     def set_current_data_property(self, prop, val):
         setattr(self.data[self._current_data], prop, val)
 
     def fit_current_data_peaks(self, peakfun=voigt):
-        def minfun(xdat, *pp):
-            np_per_pk = 4 if peakfun == voigt else 3
-            ycalc = xdat*0
-            for pk in range(int(len(pp) / np_per_pk)):
-                i0 = pk * np_per_pk
-                ycalc += peakfun(xdat, *pp[i0:i0+np_per_pk])
-            return ycalc
         x, y, e = (getattr(self.data[self._current_data], col) for col in ['x', 'y', 'e'])
-        p0 = np.hstack([get_pk_init(x, y, cc, peakfun) for cc in self.data[self._current_data].peaks_guess])
-        popt, pcov = scipy.optimize.curve_fit(minfun, x, y, np.array(p0), e if len(e) > 0 else None)
-        self.data[self._current_data].peaks_par = popt
-        self.data[self._current_data].peaks_trace = minfun(x, *popt)
+        p0 = np.hstack([get_pk_init(x, y, cc, peakfun) for cc in self.data[self._current_data].peaks['guess']])
+        popt, pcov = scipy.optimize.curve_fit(lambda xx, *pp: specfun(xx, *pp, peakfun=peakfun), x, y, p0, e if len(e) > 0 else None)
+        self.data[self._current_data].peaks['par'] = popt
+        self.data[self._current_data].peaks['trace'] = specfun(x, *popt, peakfun=peakfun)
+
+    def fit_current_data_elastic(self):
+        x, y, e = (getattr(self.data[self._current_data], col) for col in ['x', 'y', 'e'])
+        y0 = np.nanmax(y[np.where(np.abs(x) < np.nanmax(x)/20)])
+        p0 = self.data[self._current_data].peaks['guess']
+        if p0 is None:
+            p0 = get_pk_init(x, y, [0, y0], voigt) + [0.01, np.nanmin(x)]
+        popt, pcov = scipy.optimize.curve_fit(lambda xx, *pp: specfun(xx, *pp, peakfun=voigt), x, y, p0, e if len(e) > 0 else None)
+        self.data[self._current_data].elastic['par'] = popt
+        self.data[self._current_data].elastic['trace'] = specfun(x, *popt, peakfun=voigt)

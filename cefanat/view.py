@@ -10,7 +10,8 @@ from qtpy.QtCore import QEventLoop, Qt, QProcess, Signal, QAbstractTableModel  #
 from qtpy.QtWidgets import (QAction, QCheckBox, QComboBox, QDialog, QFileDialog, QGridLayout, QHBoxLayout, QMenu, QLabel,
                             QLineEdit, QMainWindow, QMessageBox, QPushButton, QSizePolicy, QSpacerItem, QTabWidget,
                             QGroupBox, QRadioButton, QStackedWidget, QTextEdit, QVBoxLayout, QListWidget, QWidget,
-                            QTableWidget, QTableWidgetItem, QActionGroup, QStatusBar, QTreeWidget, QTreeWidgetItem)  # noqa
+                            QTableWidget, QTableWidgetItem, QActionGroup, QStatusBar, QTreeWidget, QTreeWidgetItem,
+                            QToolButton)  # noqa
 from matplotlib.figure import Figure
 from matplotlib.widgets import Slider
 from matplotlib.backend_bases import MouseButton
@@ -173,6 +174,36 @@ class ExclusiveComboHeaders():
             self.parent.textdatacombos_changed(self.parent.datalist.currentRow(), self.xyeind)
 
 
+class _DummyPushButton():
+    @property
+    def clicked(self):
+        return self
+    def connect(self, target):
+        self.target = target
+    def emit(self, *args, **kwargs):
+        if hasattr(self, 'target'):
+            self.target(*args, **kwargs)
+
+
+def create_dropdownbutton(parent, options, propnames, style='', enabled=True):
+    btn = QToolButton(parent)
+    btn.setText(options[0])
+    btn.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+    btn.setPopupMode(QToolButton.MenuButtonPopup)
+    btn.setStyleSheet(style)
+    btn.setEnabled(enabled)
+    elmenu, optmap = (QMenu(), {})
+    for name, prp in zip(options, propnames):
+        act = QAction(name, parent)
+        act.triggered.connect(lambda checked, n=name: btn.setText(n) or btn.clicked.emit(False))
+        elmenu.addAction(act)
+        setattr(parent, prp, _DummyPushButton())
+        optmap[name] = getattr(parent, prp)
+    btn.setMenu(elmenu)
+    btn.clicked.connect(lambda ischecked: optmap[btn.text()].emit(ischecked))
+    return btn
+
+
 class CEFAnaTView(QWidget):
 
     def __init__(self, parent=None):
@@ -273,7 +304,7 @@ class CEFAnaTView(QWidget):
         [getattr(self, f'matdata{c}').setText(v) for c, v in zip (['x', 'y', 'e'], xyeind)]
         self.matdatatree.clear()
         for k in matdic.keys():
-            itm = QTreeWidgetItem(self.matdatatable)
+            itm = QTreeWidgetItem(self.matdatatree)
             itm.setText(0, k)
 
     def reset_data_meta(self, data=None):
@@ -308,26 +339,31 @@ class CEFAnaTView(QWidget):
                 self.set_mat_data(data.raw, data.xyeind)
         self.reset_data_meta(data)
         self.datatoolsaddpk.setEnabled(data.datatype == 'INS')
-        self.datatoolsfitpk.setEnabled(data.peaks_guess is not None)
+        self.datatoolselast.setEnabled(data.datatype == 'INS')
+        self.datatoolsfitpk.setEnabled(data.peaks['guess'] is not None)
+        self.datatoolsmodpk.setEnabled(data.peaks['guess'] is not None)
+        self.datatoolshide0.setEnabled(data.elastic['par'] is not None)
         if data.array is not None:
             self.plot_data(data)
         self.is_noninteractive = False
 
     def plot_data(self, data):
-        self.datatoolsfitpk.setEnabled(data.peaks_guess is not None)
+        self.datatoolsfitpk.setEnabled(data.peaks['guess'] is not None)
         self.dataaxes.cla()
         if data.array.shape[1] > 2:
             self.dataaxes.errorbar(data.x, data.y, data.e, fmt='ob')
         else:
             self.dataaxes.plot(data.x, data.y, 'ob')
-        if data.peaks_guess is not None:
-            self.dataaxes.plot(data.peaks_guess[:,0], data.peaks_guess[:,1], 'sr', markersize=10)
-        if data.peaks_guesswidths is not None:
-            yy = np.array([[y0/2, y0/2, np.nan] for y0 in data.peaks_guess[:,1]]).ravel()
-            xx = np.array([[x0-0.5*w, x0+0.5*w, np.nan] for x0, w in zip(data.peaks_guess[:,0], data.peaks_guesswidths)]).ravel()
+        if data.peaks['guess'] is not None:
+            self.dataaxes.plot(data.peaks['guess'][:,0], data.peaks['guess'][:,1], 'sr', markersize=10)
+        if data.peaks['widths'] is not None:
+            yy = np.array([[y0/2, y0/2, np.nan] for y0 in data.peaks['guess'][:,1]]).ravel()
+            xx = np.array([[x0-0.5*w, x0+0.5*w, np.nan] for x0, w in zip(data.peaks['guess'][:,0], data.peaks['widths'])]).ravel()
             self.dataaxes.plot(xx, yy, '-r')
-        if data.peaks_trace is not None:
-            self.dataaxes.plot(data.x, data.peaks_trace, '-k')
+        if data.peaks['trace'] is not None:
+            self.dataaxes.plot(data.x, data.peaks['trace'], '-k')
+        if data.elastic['trace'] is not None:
+            self.dataaxes.plot(data.x, data.elastic['trace'], '--k')
         self.dataaxes.set_xlabel(data.xlabel)
         self.dataaxes.set_ylabel(data.ylabel)
         self.datacanvas.draw()
@@ -351,8 +387,11 @@ class CEFAnaTView(QWidget):
     def set_current_data(self, index):
         self.datalist.setCurrentRow(index)
 
-    def get_peaks(self):
-        self.display_status('Left click on peak to add. Middle click to remove previous peak. Right click to stop')
+    def guess_peaks(self, elastic=False):
+        if elastic:
+            self.display_status('Left click on the elastic peak, and optionally two points defining the width. Right click to stop')
+        else:
+            self.display_status('Left click on peak to add. Middle click to remove previous peak. Right click to stop')
         coords = self.datafig.ginput(-1, mouse_pop=None, mouse_stop=MouseButton.RIGHT)
         self.clear_status()
         return coords
@@ -370,7 +409,7 @@ class CEFAnaTView(QWidget):
         self.statusbar.clearMessage()
 
     def drawdatatab(self):
-        self.dataloadbtn = QPushButton("Load Data")
+        self.dataloadbtn = QPushButton("Load Data", self)
         self.datalist = QListWidget(self.datatab)
         self.datafig = Figure()
         self.datadisplay = QTabWidget(self)
@@ -384,17 +423,24 @@ class CEFAnaTView(QWidget):
         self.datatools = QWidget()
         datatools1 = QWidget()
         self.datatoolsnav = NavigationToolbar(self.datacanvas, self.datatab)
-        self.datatoolsswitch = QPushButton('Switch to tiles', enabled=False)
+        self.datatoolsswitch = QPushButton('Switch to tiles', self, enabled=False)
         toollayout1 = QHBoxLayout()
         toollayout1.addWidget(self.datatoolsnav)
         toollayout1.addWidget(self.datatoolsswitch)
         datatools1.setLayout(toollayout1)
         datatools2 = QWidget()
-        self.datatoolsaddpk = QPushButton('Define peaks', enabled=False)
-        self.datatoolsfitpk = QPushButton('Fit peaks', enabled=False)
-        self.datatoolspk2cf = QPushButton('Peaks to Blm', enabled=False)
+        self.datatoolselast = create_dropdownbutton(self, ['Fit elastic', 'Define elastic', 'Modify elastic'], 
+            ['datatoolsfitel', 'datatoolsdefel', 'datatoolsmodel'], 'padding: 2 10 2 10; min-width:6em', enabled=False)
+        self.datatoolshide0 = QPushButton('Hide elastic', self, enabled=False)
+        self.datatoolsaddpk = QPushButton('Define peaks', self, enabled=False)
+        self.datatoolsmodpk = QPushButton('Modify peaks', self, enabled=False)
+        self.datatoolsfitpk = QPushButton('Fit peaks', self, enabled=False)
+        self.datatoolspk2cf = QPushButton('Peaks to Blm', self, enabled=False)
         toollayout2 = QHBoxLayout()
+        toollayout2.addWidget(self.datatoolselast)
+        toollayout2.addWidget(self.datatoolshide0)
         toollayout2.addWidget(self.datatoolsaddpk)
+        toollayout2.addWidget(self.datatoolsmodpk)
         toollayout2.addWidget(self.datatoolsfitpk)
         toollayout2.addWidget(self.datatoolspk2cf)
         datatools2.setLayout(toollayout2)
@@ -421,7 +467,7 @@ class CEFAnaTView(QWidget):
             ]:
             self.datapropstack.addWidget(prop)
         self.datatype.changed.connect(lambda index: self.datapropstack.setCurrentIndex(index))
-        self.dataedit = QPushButton('Edit')
+        self.dataedit = QPushButton('Edit', self)
         propslayout = QVBoxLayout()
         propslayout.addWidget(self.datatype)
         propslayout.addWidget(self.datapropstack)
@@ -502,7 +548,7 @@ class CEFAnaTView(QWidget):
             self.fittabs.addTab(create_vertical_inputs(self, prop), names)
         self.fitobjective = RadioGroup(self, ['chi-sq', 'R-sq'], 'Objective')
         self.fittype = RadioGroup(self, ['Fit CEF', 'Fit effective charges'], '')
-        self.fitbtn = QPushButton('Fit')
+        self.fitbtn = QPushButton('Fit', self)
         for widg in [self.fittabs, self.fitobjective, self.fittype, self.fitbtn]:
             self.fitlayout[0].addWidget(widg)
         self.fitlayout[0].addItem(QSpacerItem(0, 300))
