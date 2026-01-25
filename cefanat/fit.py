@@ -34,18 +34,25 @@ def specfun(xdat, *pp, peakfun):
     return ycalc
 
 
-def get_pk_init(x, y, cc, peakfun):
-    hh = (cc[1] - np.nanmin(y)) / 1.5  # Makes peaks narrower otherwise could get flat lines
-    x0 = np.argmin(np.abs(x - cc[0]))
-    # Heuristic 1: finds width at half height
-    xl = np.where(y[:x0] < hh)[0]
-    xl = 0 if len(xl) == 0 else xl[-1]
-    xr = np.where(y[x0:] < hh)[0]
-    xr = len(x) if len(xr) == 0 else xr[0] + x0
-    # Heuristic 2: finds average slope over next 3 points
-    xl2 = np.polynomial.Polynomial.fit(y[max(x0-3,0):x0], x[max(x0-3,0):x0], deg=1)(hh) 
-    xr2 = np.polynomial.Polynomial.fit(y[x0:min(x0+3,len(y))], x[x0:min(x0+3,len(y))], deg=1)(hh) 
-    fwhm = abs(min(x[xr], xr2) - max(x[xl], xl2))
+def get_pk_init(x, y, cc, peakfun, widths=None):
+    if widths is None:
+        hh = (cc[1] - np.nanmin(y)) / 1.5  # Makes peaks narrower otherwise could get flat lines
+        x0 = np.argmin(np.abs(x - cc[0]))
+        # Heuristic 1: finds width at half height
+        xl = np.where(y[:x0] < hh)[0]
+        xl = 0 if len(xl) == 0 else xl[-1]
+        xr = np.where(y[x0:] < hh)[0]
+        xr = len(x) if len(xr) == 0 else xr[0] + x0
+        # Heuristic 2: finds average slope over next 3 points
+        try:
+            xl2 = np.polynomial.Polynomial.fit(y[max(x0-3,0):x0], x[max(x0-3,0):x0], deg=1)(hh) 
+            xr2 = np.polynomial.Polynomial.fit(y[x0:min(x0+3,len(y))], x[x0:min(x0+3,len(y))], deg=1)(hh) 
+        except np.linalg.LinAlgError:
+            fwhm = abs(x[xr] - x[xl])
+        else:
+            fwhm = abs(min(x[xr], xr2) - max(x[xl], xl2))
+    else:
+        fwhm = widths
     if peakfun == voigt:
         return [cc[0], cc[1] * fwhm / 2, fwhm, 0.5]
     return [cc[0], cc[1] * fwhm / 2, fwhm]
@@ -120,8 +127,9 @@ class Fit():
         setattr(self.data[self._current_data], prop, val)
 
     def fit_current_data_peaks(self, peakfun=voigt):
-        x, y, e = (getattr(self.data[self._current_data], col) for col in ['x', 'y', 'e'])
-        p0 = np.hstack([get_pk_init(x, y, cc, peakfun) for cc in self.data[self._current_data].peaks['guess']] + [0.01, np.nanmin(x)])
+        data, widths = (self.data[self._current_data], self.data[self._current_data].peaks['widths'])
+        x, y, e = (getattr(data, col) for col in ['x', 'y', 'e'])
+        p0 = np.hstack([get_pk_init(x, y, cc, peakfun, wd) for cc, wd in zip(data.peaks['guess'], widths)] + [0.01, np.nanmin(x)])
         popt, pcov = curvefit(lambda xx, *pp: specfun(xx, *pp, peakfun=peakfun), x, y, p0, e if len(e) > 0 else None)
         self.data[self._current_data].peaks['par'] = popt
         self.data[self._current_data].peaks['trace'] = specfun(x, *popt, peakfun=peakfun)
