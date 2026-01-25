@@ -43,12 +43,20 @@ def get_pk_init(x, y, cc, peakfun):
     xr = np.where(y[x0:] < hh)[0]
     xr = len(x) if len(xr) == 0 else xr[0] + x0
     # Heuristic 2: finds average slope over next 3 points
-    xl2 = np.polynomial.Polynomial.fit(y[x0-3:x0], x[x0-3:x0], deg=1)(hh) 
-    xr2 = np.polynomial.Polynomial.fit(y[x0:x0+3], x[x0:x0+3], deg=1)(hh) 
+    xl2 = np.polynomial.Polynomial.fit(y[max(x0-3,0):x0], x[max(x0-3,0):x0], deg=1)(hh) 
+    xr2 = np.polynomial.Polynomial.fit(y[x0:min(x0+3,len(y))], x[x0:min(x0+3,len(y))], deg=1)(hh) 
     fwhm = min(x[xr], xr2) - max(x[xl], xl2)
     if peakfun == voigt:
         return [cc[0], cc[1] * fwhm / 2, fwhm, 0.5]
     return [cc[0], cc[1] * fwhm / 2, fwhm]
+
+
+def curvefit(fun, xdat, ydat, p0, edat=None, *args, **kwargs):
+    if any(np.isnan(ydat)):
+        idx = np.where(~np.isnan(ydat))[0]
+        xdat, ydat = (v[idx] for v in [xdat, ydat])
+        edat = edat if edat is None else edat[idx]
+    return scipy.optimize.curve_fit(fun, xdat, ydat, p0, edat, *args, **kwargs)
 
 
 class Fit():
@@ -109,8 +117,8 @@ class Fit():
 
     def fit_current_data_peaks(self, peakfun=voigt):
         x, y, e = (getattr(self.data[self._current_data], col) for col in ['x', 'y', 'e'])
-        p0 = np.hstack([get_pk_init(x, y, cc, peakfun) for cc in self.data[self._current_data].peaks['guess']])
-        popt, pcov = scipy.optimize.curve_fit(lambda xx, *pp: specfun(xx, *pp, peakfun=peakfun), x, y, p0, e if len(e) > 0 else None)
+        p0 = np.hstack([get_pk_init(x, y, cc, peakfun) for cc in self.data[self._current_data].peaks['guess']] + [0.01, np.nanmin(x)])
+        popt, pcov = curvefit(lambda xx, *pp: specfun(xx, *pp, peakfun=peakfun), x, y, p0, e if len(e) > 0 else None)
         self.data[self._current_data].peaks['par'] = popt
         self.data[self._current_data].peaks['trace'] = specfun(x, *popt, peakfun=peakfun)
 
@@ -120,6 +128,12 @@ class Fit():
         p0 = self.data[self._current_data].peaks['guess']
         if p0 is None:
             p0 = get_pk_init(x, y, [0, y0], voigt) + [0.01, np.nanmin(x)]
-        popt, pcov = scipy.optimize.curve_fit(lambda xx, *pp: specfun(xx, *pp, peakfun=voigt), x, y, p0, e if len(e) > 0 else None)
+        popt, pcov = curvefit(lambda xx, *pp: specfun(xx, *pp, peakfun=voigt), x, y, p0, e if len(e) > 0 else None)
         self.data[self._current_data].elastic['par'] = popt
         self.data[self._current_data].elastic['trace'] = specfun(x, *popt, peakfun=voigt)
+
+    def current_data_toggle_elastic(self):
+        self.data[self._current_data].sub_el = not self.data[self._current_data].sub_el
+
+    def current_data_toggle_mask(self):
+        self.data[self._current_data].mask_el = not self.data[self._current_data].mask_el

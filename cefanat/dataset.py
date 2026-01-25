@@ -2,6 +2,7 @@
 Dataset class for the Crystal Electric Field Analysis Toolkit (CEFAnaT)
 """
 import numpy as np
+import copy
 
 # The order of these definitions must match the order in GroupBoxes in the View
 DATATYPES = ['INS', 'MH', 'MT', 'CHI', 'CP']
@@ -22,10 +23,10 @@ class Dataset:
         self.raw = raw
         self.datatype = 'INS'
         self.Hdir = 'powder'
-        self.peaks_guess = None
-        self.peaks_guesswidths = None
-        self.peaks_par = None
-        self.peaks_trace = None
+        self.peaks = {k:None for k in ['guess', 'widths', 'par', 'trace']}
+        self.elastic = {k:None for k in ['guess', 'par', 'trace']}
+        self.sub_el = False
+        self.mask_el = False
 
     @property
     def array(self):
@@ -56,9 +57,17 @@ class Dataset:
     @property
     def xye(self):
         if isinstance(self.x_ind, str):
-            return self.array[:, [0, 1] if self.e_ind is None else [0, 1, 2]]
+            y0 = self.array[:, [0, 1] if self.e_ind is None else [0, 1, 2]]
         else:
-            return self.array[:, [self.x_ind, self.y_ind] if self.e_ind is None else self.xyeind]
+            y0 = self.array[:, [self.x_ind, self.y_ind] if self.e_ind is None else self.xyeind]
+        if self.sub_el:
+            y0[:,1] = y0[:,1] - self.elastic['trace']
+        elif self.mask_el:
+            x0, fwhm = tuple(self.elastic['par'][[0, 2]])
+            idx = np.where((y0[:,0] > (x0 - 2*fwhm)) * (y0[:,0] < (x0 + 2*fwhm)))[0]
+            y0 = copy.deepcopy(y0)
+            y0[:,1][idx] = np.nan
+        return y0
 
     @property
     def x(self):
@@ -66,7 +75,14 @@ class Dataset:
 
     @property
     def y(self):
-        return self.array[:, 1 if isinstance(self.x_ind, str) else self.y_ind]
+        print(self.mask_el, self.sub_el)
+        y0 = self.array[:, 1 if isinstance(self.x_ind, str) else self.y_ind]
+        if self.mask_el:
+            x0, fwhm = tuple(self.elastic['par'][[0, 2]])
+            idx = np.where((self.x > (x0 - 2*fwhm)) * (self.x < (x0 + 2*fwhm)))[0]
+            y0 = copy.deepcopy(y0)
+            y0[idx] = np.nan
+        return (y0 - self.elastic['trace']) if self.sub_el else y0
 
     @property
     def e(self):
@@ -135,6 +151,21 @@ class Dataset:
             case 'CHI': return f'Inverse Susceptibility (1/{self.chi_unit})' if self.invchi else f'Susceptibility ({self.chi_unit})'
             case 'CP': return 'Magnetic Specific Heat (J/mol/K)'
 
+    @property
+    def sub_el(self):
+        return self._sub_el
+
+    @sub_el.setter
+    def sub_el(self, value):
+        self._sub_el = value and self.elastic['par'] is not None
+
+    @property
+    def mask_el(self):
+        return self._mask_el
+
+    @mask_el.setter
+    def mask_el(self, value):
+        self._mask_el = value and self.elastic['par'] is not None
 
 class DataCollection:
 

@@ -175,6 +175,9 @@ class ExclusiveComboHeaders():
 
 
 class _DummyPushButton():
+    def __init__(self, idx, parent):
+        self.idx = idx 
+        self.parent = parent
     @property
     def clicked(self):
         return self
@@ -183,25 +186,35 @@ class _DummyPushButton():
     def emit(self, *args, **kwargs):
         if hasattr(self, 'target'):
             self.target(*args, **kwargs)
+    def setText(self, value):
+        self.parent._setText(self.idx, value)
 
 
-def create_dropdownbutton(parent, options, propnames, style='', enabled=True):
-    btn = QToolButton(parent)
-    btn.setText(options[0])
-    btn.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
-    btn.setPopupMode(QToolButton.MenuButtonPopup)
-    btn.setStyleSheet(style)
-    btn.setEnabled(enabled)
-    elmenu, optmap = (QMenu(), {})
-    for name, prp in zip(options, propnames):
-        act = QAction(name, parent)
-        act.triggered.connect(lambda checked, n=name: btn.setText(n) or btn.clicked.emit(False))
-        elmenu.addAction(act)
-        setattr(parent, prp, _DummyPushButton())
-        optmap[name] = getattr(parent, prp)
-    btn.setMenu(elmenu)
-    btn.clicked.connect(lambda ischecked: optmap[btn.text()].emit(ischecked))
-    return btn
+class DropdownButton(QToolButton):
+    def __init__(self, parent, options, propnames, enabled=True):
+        super(QToolButton, self).__init__(parent)
+        self.setText(options[0])
+        self.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+        self.setPopupMode(QToolButton.MenuButtonPopup)
+        self.setStyleSheet('padding: 2 10 2 10; min-width:6em')
+        self.setEnabled(enabled)
+        self._current = 0
+        self._children, elmenu = ([], QMenu())
+        for ii, name, prp in zip(range(len(options)), options, propnames):
+            self._children.append([QAction(name, parent), _DummyPushButton(ii, self)])
+            self._children[-1][0].triggered.connect(lambda checked, idx=ii: self._triggered(idx))
+            elmenu.addAction(self._children[-1][0])
+            setattr(parent, prp, self._children[-1][1])
+        self.setMenu(elmenu)
+        self.clicked.connect(lambda ischecked: self._children[self._current][1].emit(ischecked))
+    def _triggered(self, idx):
+        self._current = idx
+        self.setText(self._children[idx][0].text())
+        self._children[idx][1].emit(False)
+    def _setText(self, idx, value):
+        self._children[idx][0].setText(value)
+        if idx == self._current:
+            self.setText(value)
 
 
 class CEFAnaTView(QWidget):
@@ -342,7 +355,9 @@ class CEFAnaTView(QWidget):
         self.datatoolselast.setEnabled(data.datatype == 'INS')
         self.datatoolsfitpk.setEnabled(data.peaks['guess'] is not None)
         self.datatoolsmodpk.setEnabled(data.peaks['guess'] is not None)
-        self.datatoolshide0.setEnabled(data.elastic['par'] is not None)
+        self.datatoolselas2.setEnabled(data.elastic['par'] is not None)
+        self.datatoolshide0.setText('Show elastic' if data.sub_el else 'Hide elastic')
+        self.datatoolsmskel.setText('Unmask elastic' if data.mask_el else 'Mask elastic')
         if data.array is not None:
             self.plot_data(data)
         self.is_noninteractive = False
@@ -362,7 +377,7 @@ class CEFAnaTView(QWidget):
             self.dataaxes.plot(xx, yy, '-r')
         if data.peaks['trace'] is not None:
             self.dataaxes.plot(data.x, data.peaks['trace'], '-k')
-        if data.elastic['trace'] is not None:
+        if data.elastic['trace'] is not None and not (data.sub_el or data.mask_el):
             self.dataaxes.plot(data.x, data.elastic['trace'], '--k')
         self.dataaxes.set_xlabel(data.xlabel)
         self.dataaxes.set_ylabel(data.ylabel)
@@ -429,16 +444,17 @@ class CEFAnaTView(QWidget):
         toollayout1.addWidget(self.datatoolsswitch)
         datatools1.setLayout(toollayout1)
         datatools2 = QWidget()
-        self.datatoolselast = create_dropdownbutton(self, ['Fit elastic', 'Define elastic', 'Modify elastic'], 
-            ['datatoolsfitel', 'datatoolsdefel', 'datatoolsmodel'], 'padding: 2 10 2 10; min-width:6em', enabled=False)
-        self.datatoolshide0 = QPushButton('Hide elastic', self, enabled=False)
+        self.datatoolselast = DropdownButton(self, ['Fit elastic', 'Define elastic', 'Modify elastic'], 
+            ['datatoolsfitel', 'datatoolsdefel', 'datatoolsmodel'], enabled=False)
+        self.datatoolselas2 = DropdownButton(self, ['Mask elastic', 'Hide elastic'],
+            ['datatoolsmskel', 'datatoolshide0'], enabled=False)
         self.datatoolsaddpk = QPushButton('Define peaks', self, enabled=False)
         self.datatoolsmodpk = QPushButton('Modify peaks', self, enabled=False)
         self.datatoolsfitpk = QPushButton('Fit peaks', self, enabled=False)
         self.datatoolspk2cf = QPushButton('Peaks to Blm', self, enabled=False)
         toollayout2 = QHBoxLayout()
         toollayout2.addWidget(self.datatoolselast)
-        toollayout2.addWidget(self.datatoolshide0)
+        toollayout2.addWidget(self.datatoolselas2)
         toollayout2.addWidget(self.datatoolsaddpk)
         toollayout2.addWidget(self.datatoolsmodpk)
         toollayout2.addWidget(self.datatoolsfitpk)

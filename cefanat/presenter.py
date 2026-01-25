@@ -101,6 +101,8 @@ class CEFAnaTPresenter():
         self.view.connect('datatoolsfitpk', 'clicked', self.on_data_fit_peak)
         self.view.connect('datatoolsfitel', 'clicked', self.on_data_fit_elastic)
         self.view.connect('datatoolsdefel', 'clicked', self.on_data_define_elastic)
+        self.view.connect('datatoolshide0', 'clicked', self.on_data_hide_elastic)
+        self.view.connect('datatoolsmskel', 'clicked', self.on_data_mask_elastic)
         self.view.set_fit_local_minimizers(MINIMIZE_METHODS)
         self.view.set_fit_global_minimizers(MINIMIZE_METHODS)
         self.view.set_fit_global(GLOBAL_METHODS)
@@ -174,7 +176,7 @@ class CEFAnaTPresenter():
     @display_error
     def on_data_fit_peak(self, ischecked):
         self.fit.fit_current_data_peaks()
-        self.view.plot_data(self.fit.get_current_data())
+        self.view.update_data(self.fit.get_current_data())
 
     @display_error
     def on_data_define_elastic(self, ischecked):
@@ -184,7 +186,17 @@ class CEFAnaTPresenter():
     @display_error
     def on_data_fit_elastic(self, ischecked):
         self.fit.fit_current_data_elastic()
-        self.view.plot_data(self.fit.get_current_data())
+        self.view.update_data(self.fit.get_current_data())
+
+    @display_error
+    def on_data_hide_elastic(self, ischecked):
+        self.fit.current_data_toggle_elastic()
+        self.view.update_data(self.fit.get_current_data())
+
+    @display_error
+    def on_data_mask_elastic(self, ischecked):
+        self.fit.current_data_toggle_mask()
+        self.view.update_data(self.fit.get_current_data())
 
     @display_error
     def on_engine_change(self, engineobj):
