@@ -45,7 +45,7 @@ def get_pk_init(x, y, cc, peakfun):
     # Heuristic 2: finds average slope over next 3 points
     xl2 = np.polynomial.Polynomial.fit(y[max(x0-3,0):x0], x[max(x0-3,0):x0], deg=1)(hh) 
     xr2 = np.polynomial.Polynomial.fit(y[x0:min(x0+3,len(y))], x[x0:min(x0+3,len(y))], deg=1)(hh) 
-    fwhm = min(x[xr], xr2) - max(x[xl], xl2)
+    fwhm = abs(min(x[xr], xr2) - max(x[xl], xl2))
     if peakfun == voigt:
         return [cc[0], cc[1] * fwhm / 2, fwhm, 0.5]
     return [cc[0], cc[1] * fwhm / 2, fwhm]
@@ -100,6 +100,10 @@ class Fit():
             data = self.data[self._current_data]
             self.data[self._current_data].peaks['guess'] = peaks
             self.data[self._current_data].peaks['widths'] = [get_pk_init(data.x, data.y, cc, gauss)[2] for cc in peaks]
+
+    def update_current_data_peaks_guess(self, peaks, widths):
+        self.data[self._current_data].peaks['guess'] = peaks
+        self.data[self._current_data].peaks['widths'] = widths
 
     def set_current_data_elastic_guess(self, cc):
         self.data[self._current_data].elastic = {k:None for k in ['guess', 'par', 'trace']}

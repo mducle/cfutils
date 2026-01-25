@@ -99,6 +99,7 @@ class CEFAnaTPresenter():
         self.view.connect('datatoolsaddpk', 'clicked', self.on_data_add_peak)
         self.view.connect('datatoolsmodpk', 'clicked', self.on_data_mod_peak)
         self.view.connect('datatoolsfitpk', 'clicked', self.on_data_fit_peak)
+        self.view.connect('datatoolsupdpk', 'clicked', self.on_data_update_peak)
         self.view.connect('datatoolsfitel', 'clicked', self.on_data_fit_elastic)
         self.view.connect('datatoolsdefel', 'clicked', self.on_data_define_elastic)
         self.view.connect('datatoolshide0', 'clicked', self.on_data_hide_elastic)
@@ -171,12 +172,17 @@ class CEFAnaTPresenter():
 
     @display_error
     def on_data_mod_peak(self, ischecked):
-        self.view.mod_peak(self.fit.get_current_data())
+        self.view.mod_peaks(self.fit.get_current_data())
+
+    @display_error
+    def on_data_update_peak(self, values):
+        self.fit.update_current_data_peaks_guess(*values) 
+        self.view.plot_data(self.fit.get_current_data())
 
     @display_error
     def on_data_fit_peak(self, ischecked):
         self.fit.fit_current_data_peaks()
-        self.view.update_data(self.fit.get_current_data())
+        self.view.plot_data(self.fit.get_current_data())
 
     @display_error
     def on_data_define_elastic(self, ischecked):
@@ -186,17 +192,17 @@ class CEFAnaTPresenter():
     @display_error
     def on_data_fit_elastic(self, ischecked):
         self.fit.fit_current_data_elastic()
-        self.view.update_data(self.fit.get_current_data())
+        self.view.plot_data(self.fit.get_current_data())
 
     @display_error
     def on_data_hide_elastic(self, ischecked):
         self.fit.current_data_toggle_elastic()
-        self.view.update_data(self.fit.get_current_data())
+        self.view.plot_data(self.fit.get_current_data())
 
     @display_error
     def on_data_mask_elastic(self, ischecked):
         self.fit.current_data_toggle_mask()
-        self.view.update_data(self.fit.get_current_data())
+        self.view.plot_data(self.fit.get_current_data())
 
     @display_error
     def on_engine_change(self, engineobj):

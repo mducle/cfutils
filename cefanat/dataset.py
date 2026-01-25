@@ -75,7 +75,6 @@ class Dataset:
 
     @property
     def y(self):
-        print(self.mask_el, self.sub_el)
         y0 = self.array[:, 1 if isinstance(self.x_ind, str) else self.y_ind]
         if self.mask_el:
             x0, fwhm = tuple(self.elastic['par'][[0, 2]])

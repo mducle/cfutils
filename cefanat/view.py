@@ -6,6 +6,7 @@ In addition it has a method, connect(), which should be used to connect callback
 """
 
 import numpy as np
+import time
 from qtpy.QtCore import QEventLoop, Qt, QProcess, Signal, QAbstractTableModel  # noqa
 from qtpy.QtWidgets import (QAction, QCheckBox, QComboBox, QDialog, QFileDialog, QGridLayout, QHBoxLayout, QMenu, QLabel,
                             QLineEdit, QMainWindow, QMessageBox, QPushButton, QSizePolicy, QSpacerItem, QTabWidget,
@@ -338,6 +339,15 @@ class CEFAnaTView(QWidget):
             if data.datatype == 'CHI':
                 self.datainput_chiinv.setChecked(data.invchi)
 
+    def toggle_toolbtns(self, data):
+        self.datatoolsaddpk.setEnabled(data.datatype == 'INS')
+        self.datatoolselast.setEnabled(data.datatype == 'INS')
+        self.datatoolsfitpk.setEnabled(data.peaks['guess'] is not None)
+        self.datatoolsmodpk.setEnabled(data.peaks['guess'] is not None)
+        self.datatoolselas2.setEnabled(data.elastic['par'] is not None)
+        self.datatoolshide0.setText('Show elastic' if data.sub_el else 'Hide elastic')
+        self.datatoolsmskel.setText('Unmask elastic' if data.mask_el else 'Mask elastic')
+
     def update_data(self, data):
         self.is_noninteractive = True
         match data.inputtype:
@@ -351,19 +361,13 @@ class CEFAnaTView(QWidget):
                 self.datadispstack.setCurrentIndex(2)
                 self.set_mat_data(data.raw, data.xyeind)
         self.reset_data_meta(data)
-        self.datatoolsaddpk.setEnabled(data.datatype == 'INS')
-        self.datatoolselast.setEnabled(data.datatype == 'INS')
-        self.datatoolsfitpk.setEnabled(data.peaks['guess'] is not None)
-        self.datatoolsmodpk.setEnabled(data.peaks['guess'] is not None)
-        self.datatoolselas2.setEnabled(data.elastic['par'] is not None)
-        self.datatoolshide0.setText('Show elastic' if data.sub_el else 'Hide elastic')
-        self.datatoolsmskel.setText('Unmask elastic' if data.mask_el else 'Mask elastic')
+        self.toggle_toolbtns(data)
         if data.array is not None:
             self.plot_data(data)
         self.is_noninteractive = False
 
     def plot_data(self, data):
-        self.datatoolsfitpk.setEnabled(data.peaks['guess'] is not None)
+        self.toggle_toolbtns(data)
         self.dataaxes.cla()
         if data.array.shape[1] > 2:
             self.dataaxes.errorbar(data.x, data.y, data.e, fmt='ob')
@@ -411,6 +415,55 @@ class CEFAnaTView(QWidget):
         self.clear_status()
         return coords
 
+    def mod_peaks(self, data):
+        nguess, guess_pk, guess_wd = (data.peaks['guess'].shape[0], None, None)
+        for v in [[art, art.get_data()[0].shape[0]] for art in self.dataaxes.lines]:
+            guess_pk = v[0] if v[1] == nguess else guess_pk
+            guess_wd = v[0] if v[1] == 3 * nguess else guess_wd
+        if guess_pk is None or guess_wd is None:
+            self.display_error('Error: could not find peaks and widths traces in plot')
+            return
+        xylim = [getattr(self.dataaxes, f'get_{v}lim')() for v in ['x', 'y']]
+        xyrng = [v[1]-v[0] for v in xylim]
+        normpk = (data.peaks['guess'] - [xylim[0][0], xylim[1][0]]) / xyrng
+        wddat = np.array([[p[0]-0.5*w, p[0]+0.5*w, p[1]/2] for p, w in zip(data.peaks['guess'], data.peaks['widths'])])
+        normwd = (wddat - [xylim[0][0], xylim[0][0], xylim[1][0]]) / [xyrng[0], xyrng[0], xyrng[1]]
+        def _disconnect(conns=['_modpeaksclick', '_modpeaksdrag', '_modpeaksrelease']):
+            for atr in conns:
+                if hasattr(self, atr) and getattr(self, atr) is not None:
+                    self.datacanvas.mpl_disconnect(getattr(self, atr))
+                    setattr(self, atr, None)
+        def _dragcb(event):
+            if event.button == MouseButton.LEFT:
+                if self._modpeakstype == 2:
+                    x0, y0 = guess_pk.get_data()
+                    x0[self._modpeaksidx] = event.xdata
+                    y0[self._modpeaksidx] = event.ydata
+                    guess_pk.set_data(x0, y0)
+                else:
+                    x0 = guess_wd.get_xdata()
+                    x0[self._modpeaksidx*3 + self._modpeakstype] = event.xdata
+                    guess_wd.set_xdata(x0)
+                self.datacanvas.draw()
+        def _releasecb(event):
+            time.sleep(0.05)
+            _disconnect(['_modpeaksdrag', '_modpeaksrelease'])
+        def _clickcb(event):
+            if event.button == MouseButton.RIGHT:
+                self.clear_status()
+                wds = np.array(guess_wd.get_xdata())
+                self.datatoolsupdpk.emit((np.vstack(guess_pk.get_data()).T, wds[1::3] - wds[::3]))
+                return _disconnect()
+            elif event.button != MouseButton.LEFT:
+                return
+            xydat = np.array([(event.xdata - xylim[0][0])/xyrng[0], (event.ydata - xylim[1][0])/xyrng[1]])
+            dists = np.array([np.linalg.norm(v - xydat, axis=1) for v in [normwd[:,[0,2]], normwd[:,[1,2]], normpk]])
+            self._modpeakstype, self._modpeaksidx = np.unravel_index(np.argmin(dists), dists.shape)
+            self._modpeaksdrag = self.datacanvas.mpl_connect('motion_notify_event', _dragcb)
+            self._modpeaksrelease = self.datacanvas.mpl_connect('button_release_event', _releasecb)
+        self.display_status('Click on a peak or width and drag it to move it. Right click to stop')
+        self._modpeaksclick = self.datacanvas.mpl_connect('button_press_event', _clickcb)
+
     def display_status(self, message):
         self.statusbar.setStyleSheet('color: black')
         self.statusbar.showMessage(message)
@@ -450,6 +503,7 @@ class CEFAnaTView(QWidget):
             ['datatoolsmskel', 'datatoolshide0'], enabled=False)
         self.datatoolsaddpk = QPushButton('Define peaks', self, enabled=False)
         self.datatoolsmodpk = QPushButton('Modify peaks', self, enabled=False)
+        self.datatoolsupdpk = _DummyPushButton(0, self)
         self.datatoolsfitpk = QPushButton('Fit peaks', self, enabled=False)
         self.datatoolspk2cf = QPushButton('Peaks to Blm', self, enabled=False)
         toollayout2 = QHBoxLayout()
