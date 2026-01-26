@@ -14,7 +14,6 @@ from qtpy.QtWidgets import (QAction, QCheckBox, QComboBox, QDialog, QFileDialog,
                             QTableWidget, QTableWidgetItem, QActionGroup, QStatusBar, QTreeWidget, QTreeWidgetItem,
                             QToolButton)  # noqa
 from matplotlib.figure import Figure
-from matplotlib.widgets import Slider
 from matplotlib.backend_bases import MouseButton
 
 try:
@@ -222,6 +221,8 @@ class CEFAnaTView(QWidget):
 
     def __init__(self, parent=None):
         super(CEFAnaTView, self).__init__(parent)
+        self.data_formats = ['text', 'nxs', 'mat', 'nxspe']
+        self._dataformatsdic = {'text':0, 'nxs':1, 'mat':2, 'nxspe':3}
         self.is_noninteractive = False
         self.drawlayout()
 
@@ -300,7 +301,7 @@ class CEFAnaTView(QWidget):
     def _setupdata_nxs_widget(self):
         return self._setupdata_mat_nxs_widget('nxs')
 
-    def set_nxs_data(self, nxsdic, xyeind):
+    def set_nxs_data(self, arrdat, nxsdic, xyeind):
         [getattr(self, f'nxsdata{c}').setText(v) for c, v in zip (['x', 'y', 'e'], xyeind)]
         self.nxsdatatree.clear()
         def _addtreeitem(parent, txt):
@@ -314,12 +315,36 @@ class CEFAnaTView(QWidget):
     def _setupdata_mat_widget(self):
         return self._setupdata_mat_nxs_widget('mat')
 
-    def set_mat_data(self, matdic, xyeind):
+    def set_mat_data(self, arrdat, matdic, xyeind):
         [getattr(self, f'matdata{c}').setText(v) for c, v in zip (['x', 'y', 'e'], xyeind)]
         self.matdatatree.clear()
         for k in matdic.keys():
             itm = QTreeWidgetItem(self.matdatatree)
             itm.setText(0, k)
+
+    def _setupdata_nxspe_widget(self):
+        rv, ly = (QWidget(self), QHBoxLayout())
+        self.nxspefig = Figure()
+        self.nxspecanvas = FigureCanvas(self.nxspefig)
+        fieldsinput = create_vertical_inputs(self,
+            [['pair', f'{qe} range', QLineEdit, f'nxspe{qe}'] for qe in ['Q', 'E']])
+        self.nxspeQ.editingFinished.connect(lambda: self.textdatacombos_changed(None, ['x_ind', self.nxspeQ.text()]))
+        self.nxspeE.editingFinished.connect(lambda: self.textdatacombos_changed(None, ['y_ind', self.nxspeE.text()]))
+        ly.addWidget(self.nxspecanvas)
+        ly.addWidget(fieldsinput)
+        rv.setLayout(ly)
+        return rv
+
+    def set_nxspe_data(self, arrdat, nxspedic, xyeind):
+        [getattr(self, f'nxspe{qe}range').setText(xyeind[ii]) for ii, qe in enumerate(['Q', 'E'])]
+        self.nxspefig.clear()
+        ax = self.nxspefig.add_subplot(111)
+        ax.set_xlabel(r'|Q| ($\mathrm{\AA}^{-1}$)')
+        ax.set_ylabel(r'Energy transfer (meV)')
+        mesh = ax.pcolormesh(nxspedic['Q'], nxspedic['E'], nxspedic['S'].T, shading='nearest')
+        mesh.set_clim(vmin=0, vmax=np.max(nxspedic['S'])/50)
+        self.nxspefig.colorbar(mesh)
+        self.nxspecanvas.draw()
 
     def reset_data_meta(self, data=None):
         for widg in ['datatype', '_insunit', '_mhunit', '_mtunit', '_chiunit']:
@@ -350,16 +375,8 @@ class CEFAnaTView(QWidget):
 
     def update_data(self, data):
         self.is_noninteractive = True
-        match data.inputtype:
-            case 'text':
-                self.datadispstack.setCurrentIndex(0)
-                self.set_text_data(data.array, data.raw, data.xyeind)
-            case 'nxs':
-                self.datadispstack.setCurrentIndex(1)
-                self.set_nxs_data(data.raw, data.xyeind)
-            case 'mat':
-                self.datadispstack.setCurrentIndex(2)
-                self.set_mat_data(data.raw, data.xyeind)
+        self.datadispstack.setCurrentIndex(self._dataformatsdic[data.inputtype])
+        getattr(self, f'set_{data.inputtype}_data')(data.array, data.raw, data.xyeind)
         self.reset_data_meta(data)
         self.toggle_toolbtns(data)
         if data.array is not None:
@@ -482,7 +499,7 @@ class CEFAnaTView(QWidget):
         self.datafig = Figure()
         self.datadisplay = QTabWidget(self)
         self.datadispstack = QStackedWidget(self)
-        for t in ['text', 'nxs', 'mat']:
+        for t in self.data_formats:
             self.datadispstack.addWidget(getattr(self, f'_setupdata_{t}_widget')()) 
         self.datacanvas = FigureCanvas(self.datafig)
         self.datadisplay.addTab(self.datacanvas, 'Plot')

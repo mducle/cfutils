@@ -86,8 +86,11 @@ class Fit():
     def update_data_columns(self, columns, dataindex=None):
         if dataindex is not None:
             self._current_data = dataindex
-        for ty, vl in zip(['x_ind', 'y_ind', 'e_ind'], columns):
-            setattr(self.data[self._current_data], ty, vl)
+        if hasattr(columns, '__iter__') and len(columns) == 3:
+            for ty, vl in zip(['x_ind', 'y_ind', 'e_ind'], columns):
+                setattr(self.data[self._current_data], ty, vl)
+        elif hasattr(columns, '__iter__') and len(columns) == 2 and isinstance(columns[0], str):
+            setattr(self.data[self._current_data], columns[0], columns[1])
 
     def is_current_data_valid(self):
         return self._current_data in self.data
