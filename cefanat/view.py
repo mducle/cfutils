@@ -6,13 +6,15 @@ In addition it has a method, connect(), which should be used to connect callback
 """
 
 import numpy as np
+import time
 from qtpy.QtCore import QEventLoop, Qt, QProcess, Signal, QAbstractTableModel  # noqa
 from qtpy.QtWidgets import (QAction, QCheckBox, QComboBox, QDialog, QFileDialog, QGridLayout, QHBoxLayout, QMenu, QLabel,
                             QLineEdit, QMainWindow, QMessageBox, QPushButton, QSizePolicy, QSpacerItem, QTabWidget,
                             QGroupBox, QRadioButton, QStackedWidget, QTextEdit, QVBoxLayout, QListWidget, QWidget,
-                            QTableWidget, QTableWidgetItem)  # noqa
+                            QTableWidget, QTableWidgetItem, QActionGroup, QStatusBar, QTreeWidget, QTreeWidgetItem,
+                            QToolButton)  # noqa
 from matplotlib.figure import Figure
-from matplotlib.widgets import Slider
+from matplotlib.backend_bases import MouseButton
 
 try:
     from mantid.plots.utility import legend_set_draggable
@@ -54,15 +56,18 @@ def create_vertical_inputs(parent, spec):
             layout.addWidget(QLabel(inp[1]))
             inpwidget = inp[2](parent)
         elif 'single' in inp[0]:
-            if isinstance(inp[1], tuple):
+            if len(inp) == 3:
+                inpwidget = inp[1](parent)
+            elif isinstance(inp[1], tuple):
                 inpwidget = inp[2](*inp[1])
             else:
                 inpwidget = inp[2](inp[1], parent)
         else:
             raise RuntimeError(f'Input item type "{inp[0]}" not recognised')
-        setattr(parent, inp[3], inpwidget)
+        setattr(parent, inp[-1], inpwidget)
         layout.addWidget(inpwidget)
     widget = QWidget(parent)
+    layout.setAlignment(Qt.AlignTop)
     widget.setLayout(layout)
     return widget
 
@@ -169,10 +174,55 @@ class ExclusiveComboHeaders():
             self.parent.textdatacombos_changed(self.parent.datalist.currentRow(), self.xyeind)
 
 
+class _DummyPushButton():
+    def __init__(self, idx, parent):
+        self.idx = idx 
+        self.parent = parent
+    @property
+    def clicked(self):
+        return self
+    def connect(self, target):
+        self.target = target
+    def emit(self, *args, **kwargs):
+        if hasattr(self, 'target'):
+            self.target(*args, **kwargs)
+    def setText(self, value):
+        self.parent._setText(self.idx, value)
+
+
+class DropdownButton(QToolButton):
+    def __init__(self, parent, options, propnames, enabled=True):
+        super(QToolButton, self).__init__(parent)
+        self.setText(options[0])
+        self.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+        self.setPopupMode(QToolButton.MenuButtonPopup)
+        self.setStyleSheet('padding: 2 10 2 10; min-width:6em')
+        self.setEnabled(enabled)
+        self._current = 0
+        self._children, elmenu = ([], QMenu())
+        for ii, name, prp in zip(range(len(options)), options, propnames):
+            self._children.append([QAction(name, parent), _DummyPushButton(ii, self)])
+            self._children[-1][0].triggered.connect(lambda checked, idx=ii: self._triggered(idx))
+            elmenu.addAction(self._children[-1][0])
+            setattr(parent, prp, self._children[-1][1])
+        self.setMenu(elmenu)
+        self.clicked.connect(lambda ischecked: self._children[self._current][1].emit(ischecked))
+    def _triggered(self, idx):
+        self._current = idx
+        self.setText(self._children[idx][0].text())
+        self._children[idx][1].emit(False)
+    def _setText(self, idx, value):
+        self._children[idx][0].setText(value)
+        if idx == self._current:
+            self.setText(value)
+
+
 class CEFAnaTView(QWidget):
 
     def __init__(self, parent=None):
         super(CEFAnaTView, self).__init__(parent)
+        self.data_formats = ['text', 'nxs', 'mat', 'nxspe']
+        self._dataformatsdic = {'text':0, 'nxs':1, 'mat':2, 'nxspe':3}
         self.is_noninteractive = False
         self.drawlayout()
 
@@ -237,14 +287,66 @@ class CEFAnaTView(QWidget):
                 self.textdatatable.setItem(i+1, j, QTableWidgetItem(f'{textdata[i,j]}'))
         self.textdatacombos = ExclusiveComboHeaders(self.textdatatable, self, xyeind)
         
+    def _setupdata_mat_nxs_widget(self, fmt):
+        rv, ly = (QWidget(self), QHBoxLayout())
+        datatable = create_vertical_inputs(self, 
+            [['single', QTreeWidget, f'{fmt}datatree'], ['single', QTableWidget, f'{fmt}datatable']])
+        fieldsinput = create_vertical_inputs(self,
+            [['pair', f'{c} field name', QLineEdit, f'{fmt}data{c}'] for c in ['x', 'y', 'e']])
+        ly.addWidget(datatable)
+        ly.addWidget(fieldsinput)
+        rv.setLayout(ly)
+        return rv
+
     def _setupdata_nxs_widget(self):
-        return QLabel('nxs')
+        return self._setupdata_mat_nxs_widget('nxs')
+
+    def set_nxs_data(self, arrdat, nxsdic, xyeind):
+        [getattr(self, f'nxsdata{c}').setText(v) for c, v in zip (['x', 'y', 'e'], xyeind)]
+        self.nxsdatatree.clear()
+        def _addtreeitem(parent, txt):
+            itm = QTreeWidgetItem(parent)
+            itm.setText(0, txt)
+            return itm
+        def _gen_leaf(dic, parent):
+            return None if dic is None else [_gen_leaf(dic[k], _addtreeitem(parent, k)) for k in dic.keys()]
+        _gen_leaf(nxsdic['root'], self.nxsdatatree)
 
     def _setupdata_mat_widget(self):
-        return QLabel('mat')
+        return self._setupdata_mat_nxs_widget('mat')
+
+    def set_mat_data(self, arrdat, matdic, xyeind):
+        [getattr(self, f'matdata{c}').setText(v) for c, v in zip (['x', 'y', 'e'], xyeind)]
+        self.matdatatree.clear()
+        for k in matdic.keys():
+            itm = QTreeWidgetItem(self.matdatatree)
+            itm.setText(0, k)
+
+    def _setupdata_nxspe_widget(self):
+        rv, ly = (QWidget(self), QHBoxLayout())
+        self.nxspefig = Figure()
+        self.nxspecanvas = FigureCanvas(self.nxspefig)
+        fieldsinput = create_vertical_inputs(self,
+            [['pair', f'{qe} range', QLineEdit, f'nxspe{qe}'] for qe in ['Q', 'E']])
+        self.nxspeQ.editingFinished.connect(lambda: self.textdatacombos_changed(None, ['x_ind', self.nxspeQ.text()]))
+        self.nxspeE.editingFinished.connect(lambda: self.textdatacombos_changed(None, ['y_ind', self.nxspeE.text()]))
+        ly.addWidget(self.nxspecanvas)
+        ly.addWidget(fieldsinput)
+        rv.setLayout(ly)
+        return rv
+
+    def set_nxspe_data(self, arrdat, nxspedic, xyeind):
+        [getattr(self, f'nxspe{qe}range').setText(xyeind[ii]) for ii, qe in enumerate(['Q', 'E'])]
+        self.nxspefig.clear()
+        ax = self.nxspefig.add_subplot(111)
+        ax.set_xlabel(r'|Q| ($\mathrm{\AA}^{-1}$)')
+        ax.set_ylabel(r'Energy transfer (meV)')
+        mesh = ax.pcolormesh(nxspedic['Q'], nxspedic['E'], nxspedic['S'].T, shading='nearest')
+        mesh.set_clim(vmin=0, vmax=np.max(nxspedic['S'])/50)
+        self.nxspefig.colorbar(mesh)
+        self.nxspecanvas.draw()
 
     def reset_data_meta(self, data=None):
-        self.is_noninteractive = True
         for widg in ['datatype', '_insunit', '_mhunit', '_mtunit', '_chiunit']:
             getattr(self, f'datainput{widg}' if widg.startswith('_') else widg).setSelectedIndex(0)
         for widg in ['instt', 'insEi', 'insH', 'mhtt', 'mth', 'cph', 'insHdir', 'mthdir', 'cphdir']:
@@ -261,27 +363,43 @@ class CEFAnaTView(QWidget):
                 getattr(self, f'datainput_{wg}').setText(str(getattr(data, prp)))
             if data.datatype == 'CHI':
                 self.datainput_chiinv.setChecked(data.invchi)
-        self.is_noninteractive = False
+
+    def toggle_toolbtns(self, data):
+        self.datatoolsaddpk.setEnabled(data.datatype == 'INS')
+        self.datatoolselast.setEnabled(data.datatype == 'INS')
+        self.datatoolsfitpk.setEnabled(data.peaks['guess'] is not None)
+        self.datatoolsmodpk.setEnabled(data.peaks['guess'] is not None)
+        self.datatoolselas2.setEnabled(data.elastic['par'] is not None)
+        self.datatoolshide0.setText('Show elastic' if data.sub_el else 'Hide elastic')
+        self.datatoolsmskel.setText('Unmask elastic' if data.mask_el else 'Mask elastic')
 
     def update_data(self, data):
-        match data.inputtype:
-            case 'text':
-                self.datadispstack.setCurrentIndex(0)
-                self.set_text_data(data.array, data.raw, data.xyeind)
-            case 'nxs':
-                self.datadispstack.setCurrentIndex(1)
-            case 'mat':
-                self.datadispstack.setCurrentIndex(2)
+        self.is_noninteractive = True
+        self.datadispstack.setCurrentIndex(self._dataformatsdic[data.inputtype])
+        getattr(self, f'set_{data.inputtype}_data')(data.array, data.raw, data.xyeind)
         self.reset_data_meta(data)
+        self.toggle_toolbtns(data)
         if data.array is not None:
             self.plot_data(data)
+        self.is_noninteractive = False
 
     def plot_data(self, data):
+        self.toggle_toolbtns(data)
         self.dataaxes.cla()
         if data.array.shape[1] > 2:
-            self.dataaxes.errorbar(data.x, data.y, data.e, fmt='o')
+            self.dataaxes.errorbar(data.x, data.y, data.e, fmt='ob')
         else:
-            self.dataaxes.plot(data.x, data.y, 'o')
+            self.dataaxes.plot(data.x, data.y, 'ob')
+        if data.peaks['guess'] is not None:
+            self.dataaxes.plot(data.peaks['guess'][:,0], data.peaks['guess'][:,1], 'sr', markersize=10)
+        if data.peaks['widths'] is not None:
+            yy = np.array([[y0/2, y0/2, np.nan] for y0 in data.peaks['guess'][:,1]]).ravel()
+            xx = np.array([[x0-0.5*w, x0+0.5*w, np.nan] for x0, w in zip(data.peaks['guess'][:,0], data.peaks['widths'])]).ravel()
+            self.dataaxes.plot(xx, yy, '-r')
+        if data.peaks['trace'] is not None:
+            self.dataaxes.plot(data.x, data.peaks['trace'], '-k')
+        if data.elastic['trace'] is not None and not (data.sub_el or data.mask_el):
+            self.dataaxes.plot(data.x, data.elastic['trace'], '--k')
         self.dataaxes.set_xlabel(data.xlabel)
         self.dataaxes.set_ylabel(data.ylabel)
         self.datacanvas.draw()
@@ -305,26 +423,114 @@ class CEFAnaTView(QWidget):
     def set_current_data(self, index):
         self.datalist.setCurrentRow(index)
 
+    def guess_peaks(self, elastic=False):
+        if elastic:
+            self.display_status('Left click on the elastic peak, and optionally two points defining the width. Right click to stop')
+        else:
+            self.display_status('Left click on peak to add. Middle click to remove previous peak. Right click to stop')
+        coords = self.datafig.ginput(-1, mouse_pop=None, mouse_stop=MouseButton.RIGHT)
+        self.clear_status()
+        return coords
+
+    def mod_peaks(self, data):
+        nguess, guess_pk, guess_wd = (data.peaks['guess'].shape[0], None, None)
+        for v in [[art, art.get_data()[0].shape[0]] for art in self.dataaxes.lines]:
+            guess_pk = v[0] if v[1] == nguess else guess_pk
+            guess_wd = v[0] if v[1] == 3 * nguess else guess_wd
+        if guess_pk is None or guess_wd is None:
+            self.display_error('Error: could not find peaks and widths traces in plot')
+            return
+        xylim = [getattr(self.dataaxes, f'get_{v}lim')() for v in ['x', 'y']]
+        xyrng = [v[1]-v[0] for v in xylim]
+        normpk = (data.peaks['guess'] - [xylim[0][0], xylim[1][0]]) / xyrng
+        wddat = np.array([[p[0]-0.5*w, p[0]+0.5*w, p[1]/2] for p, w in zip(data.peaks['guess'], data.peaks['widths'])])
+        normwd = (wddat - [xylim[0][0], xylim[0][0], xylim[1][0]]) / [xyrng[0], xyrng[0], xyrng[1]]
+        def _disconnect(conns=['_modpeaksclick', '_modpeaksdrag', '_modpeaksrelease']):
+            for atr in conns:
+                if hasattr(self, atr) and getattr(self, atr) is not None:
+                    self.datacanvas.mpl_disconnect(getattr(self, atr))
+                    setattr(self, atr, None)
+        def _dragcb(event):
+            if event.button == MouseButton.LEFT:
+                if self._modpeakstype == 2:
+                    x0, y0 = guess_pk.get_data()
+                    x0[self._modpeaksidx] = event.xdata
+                    y0[self._modpeaksidx] = event.ydata
+                    guess_pk.set_data(x0, y0)
+                else:
+                    x0 = guess_wd.get_xdata()
+                    x0[self._modpeaksidx*3 + self._modpeakstype] = event.xdata
+                    guess_wd.set_xdata(x0)
+                self.datacanvas.draw()
+        def _releasecb(event):
+            time.sleep(0.05)
+            _disconnect(['_modpeaksdrag', '_modpeaksrelease'])
+        def _clickcb(event):
+            if event.button == MouseButton.RIGHT:
+                self.clear_status()
+                wds = np.array(guess_wd.get_xdata())
+                self.datatoolsupdpk.emit((np.vstack(guess_pk.get_data()).T, wds[1::3] - wds[::3]))
+                return _disconnect()
+            elif event.button != MouseButton.LEFT:
+                return
+            xydat = np.array([(event.xdata - xylim[0][0])/xyrng[0], (event.ydata - xylim[1][0])/xyrng[1]])
+            dists = np.array([np.linalg.norm(v - xydat, axis=1) for v in [normwd[:,[0,2]], normwd[:,[1,2]], normpk]])
+            self._modpeakstype, self._modpeaksidx = np.unravel_index(np.argmin(dists), dists.shape)
+            self._modpeaksdrag = self.datacanvas.mpl_connect('motion_notify_event', _dragcb)
+            self._modpeaksrelease = self.datacanvas.mpl_connect('button_release_event', _releasecb)
+        self.display_status('Click on a peak or width and drag it to move it. Right click to stop')
+        self._modpeaksclick = self.datacanvas.mpl_connect('button_press_event', _clickcb)
+
+    def display_status(self, message):
+        self.statusbar.setStyleSheet('color: black')
+        self.statusbar.showMessage(message)
+
+    def display_error(self, message):
+        self.statusbar.setStyleSheet('color: red')
+        self.statusbar.showMessage(message)
+
+    def clear_status(self):
+        self.statusbar.setStyleSheet('color: black')
+        self.statusbar.clearMessage()
+
     def drawdatatab(self):
-        self.datalayout = QGridLayout()
-        self.dataloadbtn = QPushButton("Load Data")
+        self.dataloadbtn = QPushButton("Load Data", self)
         self.datalist = QListWidget(self.datatab)
         self.datafig = Figure()
         self.datadisplay = QTabWidget(self)
         self.datadispstack = QStackedWidget(self)
-        for t in ['text', 'nxs', 'mat']:
+        for t in self.data_formats:
             self.datadispstack.addWidget(getattr(self, f'_setupdata_{t}_widget')()) 
         self.datacanvas = FigureCanvas(self.datafig)
         self.datadisplay.addTab(self.datacanvas, 'Plot')
         self.datadisplay.addTab(self.datadispstack, 'Data')
         self.dataaxes = self.datafig.add_subplot(111)
         self.datatools = QWidget()
+        datatools1 = QWidget()
         self.datatoolsnav = NavigationToolbar(self.datacanvas, self.datatab)
-        self.datatoolsswitch = QPushButton('Switch to tiles')
-        toollayout = QHBoxLayout()
-        toollayout.addWidget(self.datatoolsnav)
-        toollayout.addWidget(self.datatoolsswitch)
-        self.datatools.setLayout(toollayout)
+        self.datatoolsswitch = QPushButton('Switch to tiles', self, enabled=False)
+        toollayout1 = QHBoxLayout()
+        toollayout1.addWidget(self.datatoolsnav)
+        toollayout1.addWidget(self.datatoolsswitch)
+        datatools1.setLayout(toollayout1)
+        datatools2 = QWidget()
+        self.datatoolselast = DropdownButton(self, ['Fit elastic', 'Define elastic', 'Modify elastic'], 
+            ['datatoolsfitel', 'datatoolsdefel', 'datatoolsmodel'], enabled=False)
+        self.datatoolselas2 = DropdownButton(self, ['Mask elastic', 'Hide elastic'],
+            ['datatoolsmskel', 'datatoolshide0'], enabled=False)
+        self.datatoolsaddpk = QPushButton('Define peaks', self, enabled=False)
+        self.datatoolsmodpk = QPushButton('Modify peaks', self, enabled=False)
+        self.datatoolsupdpk = _DummyPushButton(0, self)
+        self.datatoolsfitpk = QPushButton('Fit peaks', self, enabled=False)
+        self.datatoolspk2cf = QPushButton('Peaks to Blm', self, enabled=False)
+        toollayout2 = QHBoxLayout()
+        toollayout2.addWidget(self.datatoolselast)
+        toollayout2.addWidget(self.datatoolselas2)
+        toollayout2.addWidget(self.datatoolsaddpk)
+        toollayout2.addWidget(self.datatoolsmodpk)
+        toollayout2.addWidget(self.datatoolsfitpk)
+        toollayout2.addWidget(self.datatoolspk2cf)
+        datatools2.setLayout(toollayout2)
         self.dataprops = QWidget()
         self.datatype = RadioGroup(self, ['INS', 'M(H)', 'M(T)', 'chi(T)', 'Cp(T)'], 'Data type')
         self.datapropstack = QStackedWidget(self.datatab)
@@ -348,18 +554,26 @@ class CEFAnaTView(QWidget):
             ]:
             self.datapropstack.addWidget(prop)
         self.datatype.changed.connect(lambda index: self.datapropstack.setCurrentIndex(index))
-        self.dataedit = QPushButton('Edit')
+        self.dataedit = QPushButton('Edit', self)
         propslayout = QVBoxLayout()
         propslayout.addWidget(self.datatype)
         propslayout.addWidget(self.datapropstack)
         propslayout.addWidget(self.dataedit)
         self.dataprops.setLayout(propslayout)
-        self.datalayout.addWidget(self.dataloadbtn, 0, 0)
-        self.datalayout.addWidget(self.datalist, 1, 0)
-        self.datalayout.addWidget(self.datatools, 0, 1)
-        self.datalayout.addWidget(self.datadisplay, 1, 1)
-        self.datalayout.addWidget(self.dataprops, 0, 2, -1, 1)
-        self.datatab.setLayout(self.datalayout)
+        datalayout = QHBoxLayout()
+        datalayoutc1, datalayoutc2 = (QVBoxLayout() for _ in range(2))
+        datac1, datac2 = (QWidget() for _ in range(2))
+        datalayoutc1.addWidget(self.dataloadbtn)
+        datalayoutc1.addWidget(self.datalist)
+        datac1.setLayout(datalayoutc1)
+        datalayoutc2.addWidget(datatools1)
+        datalayoutc2.addWidget(datatools2)
+        datalayoutc2.addWidget(self.datadisplay)
+        datac2.setLayout(datalayoutc2)
+        datalayout.addWidget(datac1)
+        datalayout.addWidget(datac2)
+        datalayout.addWidget(self.dataprops)
+        self.datatab.setLayout(datalayout)
 
     def drawmodeltab(self):
         self.modelouterlayout = QHBoxLayout()
@@ -376,7 +590,8 @@ class CEFAnaTView(QWidget):
                 ['single', 'Browse', QPushButton, 'modelinputcifbrowse'],
                 ['single', 'Load', QPushButton, 'modelinputcifload'], ['spacer', 250]]),
             create_vertical_inputs(self, [
-                ['pair', 'Energy Levels', QLineEdit, 'modelinputenergies'],
+                ['pair', 'Energy Levels (comma separated list)', QLineEdit, 'modelinputenergies'],
+                ['pair', 'Point Symmetry', QLineEdit, 'modelinputensym'],
                 ['single', 'Compute', QPushButton, 'modelinputencompute'], ['spacer', 300]])
             ]:
             self.modeltypestack.addWidget(prop)
@@ -420,7 +635,7 @@ class CEFAnaTView(QWidget):
             self.fittabs.addTab(create_vertical_inputs(self, prop), names)
         self.fitobjective = RadioGroup(self, ['chi-sq', 'R-sq'], 'Objective')
         self.fittype = RadioGroup(self, ['Fit CEF', 'Fit effective charges'], '')
-        self.fitbtn = QPushButton('Fit')
+        self.fitbtn = QPushButton('Fit', self)
         for widg in [self.fittabs, self.fitobjective, self.fittype, self.fitbtn]:
             self.fitlayout[0].addWidget(widg)
         self.fitlayout[0].addItem(QSpacerItem(0, 300))
@@ -447,14 +662,39 @@ class CEFAnaTView(QWidget):
         self.mainlayout.addWidget(self.tabs)
         self.setLayout(self.mainlayout)
 
+    def set_engines(self, engines):
+        self.engines = []
+        self.enginegroup = QActionGroup(self.setengine)
+        for eng in engines:
+            actionitem = QAction(eng, self.setengine, checkable=True)
+            self.engines.append([eng, actionitem])
+            self.enginegroup.addAction(actionitem)
+            self.setengine.addAction(actionitem)
+
+    def set_calc_engine(self, engine):
+        for eng in self.engines:
+            if eng[0] == engine:
+                eng[1].setChecked(True)
+                break
+
+    def get_engine_name(self, engineobj):
+        for eng in self.engines:
+            if eng[1] == engineobj:
+                return eng[0]
+
 
 def setup_menu(mainwindow, mainview):
     for menu in [['File', [["Load data", 'loaddat'], ["Load model", 'loadmodel'], ["Save model", 'savemodel']]],
-                 ['Options', [['Set calculation engine', 'setengine']]]]:
+                 ['Options', [['menu', 'Set calculation engine', 'setengine']]]]:
         menuitem = QMenu(menu[0])
         setattr(mainview, f'menu{menu[0]}', menuitem)
         for act in menu[1]:
-            actionitem = QAction(act[0], menuitem)
-            menuitem.addAction(actionitem)
-            setattr(mainview, act[1], actionitem)
+            if act[0] == 'menu':
+                actionitem = menuitem.addMenu(act[1])
+            else:
+                actionitem = QAction(act[0], menuitem)
+                menuitem.addAction(actionitem)
+            setattr(mainview, act[-1], actionitem)
         mainwindow.menuBar().addMenu(menuitem)
+    mainview.statusbar = QStatusBar(mainwindow)
+    mainwindow.setStatusBar(mainview.statusbar)

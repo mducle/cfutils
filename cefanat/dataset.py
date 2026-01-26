@@ -2,6 +2,16 @@
 Dataset class for the Crystal Electric Field Analysis Toolkit (CEFAnaT)
 """
 import numpy as np
+import scipy
+import h5py
+import copy
+import os
+
+try:
+    import mantid.simpleapi as s_api
+    import mslice.cli as mc
+except ModuleNotFoundError:
+    s_api, mc = (None, None)
 
 # The order of these definitions must match the order in GroupBoxes in the View
 DATATYPES = ['INS', 'MH', 'MT', 'CHI', 'CP']
@@ -12,16 +22,71 @@ DATATYPE_TO_IND = {k:v for v, k in enumerate(DATATYPES)}
 MAGUNIT_TO_IND = {k:v for v, k in enumerate(MAGUNITS)}
 INSUNIT_TO_IND = {k:v for v, k in enumerate(INSUNITS)}
 
-class Dataset:
-    """Helper data class - all data assumed to be 1D"""
+def _recursive_parse_nxs(nxfield):
+    if hasattr(nxfield, 'keys'):
+        return {k:_recursive_parse_nxs(nxfield[k]) for k in nxfield.keys()}
+    else:
+        return None
 
-    def __init__(self, dataarray=None, raw=None, intype='text', x_ind=0, y_ind=1, e_ind=2):
+class Dataset:
+    """Data class - all data assumed to be 1D"""
+
+    def __init__(self, dataarray=None, raw=None, name=None, intype='text', x_ind=0, y_ind=1, e_ind=2):
+        self.name = name
         self.x_ind, self.y_ind, self.e_ind = (x_ind, y_ind, e_ind)
         self.array = dataarray
         self.inputtype = intype
         self.raw = raw
         self.datatype = 'INS'
         self.Hdir = 'powder'
+        self.peaks = {k:None for k in ['guess', 'widths', 'par', 'trace']}
+        self.elastic = {k:None for k in ['guess', 'par', 'trace']}
+        self.sub_el = False
+        self.mask_el = False
+
+    @classmethod
+    def from_file(cls, filename):
+        extras = {}
+        name = os.path.splitext(os.path.basename(filename))[0]
+        match os.path.splitext(filename)[1]:
+            case '.txt' | '.dat' | '.csv' | '.xye':
+                with open(filename, 'r') as f:
+                    raw = f.read()
+                return cls(np.loadtxt(raw.splitlines()), raw, name, intype='text')
+            case '.nxs':
+                rawdic, dat, datargs = ({'filename':filename}, None, {})
+                with h5py.File(filename, 'r') as f:
+                    rawdic['root'] = _recursive_parse_nxs(f)
+                    if 'mantid_workspace_1' in rawdic['root'] and 'workspace' in rawdic['root']['mantid_workspace_1']:
+                        dset, axs = (f['mantid_workspace_1']['workspace'], ['axis1', 'values', 'errors'])
+                        try:
+                            x, y, e = (dset[fl] for fl in axs)
+                        except KeyError:
+                            pass
+                        else:
+                            if x.size == y.size + 1:
+                                dat = np.array([(dset['axis1'][1:]+dset['axis1'][:-1])/2, np.squeeze(dset['values']), np.squeeze(dset['errors'])])
+                            else:
+                                dat = np.array([np.squeeze(dset[v]) for v in axs])
+                            datargs = {f'{k}_ind':f'mantid_workspace_1/workspace/{v}' for k, v in zip(['x', 'y', 'e'], axs)}
+                return cls(dat, rawdic, name, intype='nxs', **datargs)
+            case '.mat':
+                md, dat, datargs = (scipy.io.loadmat(filename), None, {})
+                if all([c in md.keys() for c in ['x', 'y', 'e']]) and (len(md['x']) == len(md['y'])) and (len(md['x']) == len(md['e'])):
+                    dat = np.concatenate((md['x'], md['y'], md['e']))  # MSlice saved file
+                    datargs = {'x_ind':'x', 'y_ind':'y', 'e_ind':'e'}
+                return cls(dat, md, name, intype='mat', **datargs)
+            case '.nxspe':
+                if mc is None:
+                    raise RuntimeError('Mantid or MSlice not installed - cannot load nxspe file')
+                rawdic = {'filename':filename, 'workspace':mc.Load(filename, OutputWorkspace=name)}
+                sl = mc.Slice(rawdic['workspace'])
+                rawdic.update(**{k:sl.get_coordinates()[v] for k, v in zip(['Q', 'E'], ['q', 'Energy transfer'])})
+                rawdic['S'] = sl.get_signal()
+                erng, qrng = (f'{qe},'+','.join([str(c) for c in rawdic['workspace'].limits[qe]]) for qe in ['DeltaE', '|Q|'])
+                cut = mc.Cut(rawdic['workspace'], CutAxis=erng, IntegrationAxis=qrng)
+                dat = np.array([list(cut.get_coordinates().items())[0][1], cut.get_signal(), cut.get_error()])
+                return cls(dat, rawdic, name, intype='nxspe', x_ind=qrng, y_ind=erng, e_ind='e')
 
     @property
     def array(self):
@@ -34,15 +99,25 @@ class Dataset:
         else:
             self._array = np.array(value)
             assert len(self._array.shape) == 2, 'Input array must be a 2D, n-by-2 or n-by-3 array'
-        if self._array.shape[0] < 4 and self.array.shape[1] > self.array.shape[0]:
-            self._array = self.array.T
-        assert min(self._array.shape) > 1, 'Input must be an n-by-m array, with m >= 2'
-        if self._array.shape[1] == 2:
-            self.e_ind = None
-        if self.x_ind > self.array.shape[1]:
-            self.x_ind = 0
-        if self.y_ind > self.array.shape[1] or self.y_ind == self.x_ind:
-            self.y_ind = 1
+            if self._array.shape[0] < 4 and self.array.shape[1] > self.array.shape[0]:
+                self._array = self.array.T
+            assert min(self._array.shape) > 1, 'Input must be an n-by-m array, with m >= 2'
+            if self._array.shape[1] == 2:
+                self.e_ind = None
+            if not isinstance(self.x_ind, str):
+                if self.x_ind > self.array.shape[1]:
+                    self.x_ind = 0
+                if self.y_ind > self.array.shape[1] or self.y_ind == self.x_ind:
+                    self.y_ind = 1
+
+    def _indsetter(self, col, value):
+        setattr(self, f'_{col}ind', value)
+        if hasattr(self, 'inputtype') and hasattr(self, f'_{self.inputtype}_array_update'):
+            getattr(self, f'_{self.inputtype}_array_update')()
+
+    x_ind = property(lambda self: self._xind, lambda self, val: self._indsetter('x', val))
+    y_ind = property(lambda self: self._yind, lambda self, val: self._indsetter('y', val))
+    e_ind = property(lambda self: self._eind, lambda self, val: self._indsetter('e', val))
 
     @property
     def xyeind(self):
@@ -50,19 +125,37 @@ class Dataset:
     
     @property
     def xye(self):
-        return self.array[:, self.xyeind()]
+        if isinstance(self.x_ind, str):
+            y0 = self.array[:, [0, 1] if self.e_ind is None else [0, 1, 2]]
+        else:
+            y0 = self.array[:, [self.x_ind, self.y_ind] if self.e_ind is None else self.xyeind]
+        if self.sub_el:
+            y0[:,1] = y0[:,1] - self.elastic['trace']
+        elif self.mask_el:
+            x0, fwhm = tuple(self.elastic['par'][[0, 2]])
+            idx = np.where((y0[:,0] > (x0 - 2*fwhm)) * (y0[:,0] < (x0 + 2*fwhm)))[0]
+            y0 = copy.deepcopy(y0)
+            y0[:,1][idx] = np.nan
+        return y0
 
     @property
     def x(self):
-        return self.array[:, self.x_ind]
+        return self.array[:, 0 if isinstance(self.x_ind, str) else self.x_ind]
 
     @property
     def y(self):
-        return self.array[:, self.y_ind]
+        y0 = self.array[:, 1 if isinstance(self.x_ind, str) else self.y_ind]
+        if self.mask_el:
+            x0, fwhm = tuple(self.elastic['par'][[0, 2]])
+            idx = np.where((self.x > (x0 - 2*fwhm)) * (self.x < (x0 + 2*fwhm)))[0]
+            y0 = copy.deepcopy(y0)
+            y0[idx] = np.nan
+        return (y0 - self.elastic['trace']) if self.sub_el else y0
 
     @property
     def e(self):
-        return self.array[:, self.e_ind] if self.e_ind else []
+        e_ind = 2 if isinstance(self.x_ind, str) else self.e_ind
+        return [] if e_ind is None else self.array[:, e_ind]
 
     @property
     def datatype(self):
@@ -126,6 +219,26 @@ class Dataset:
             case 'CHI': return f'Inverse Susceptibility (1/{self.chi_unit})' if self.invchi else f'Susceptibility ({self.chi_unit})'
             case 'CP': return 'Magnetic Specific Heat (J/mol/K)'
 
+    @property
+    def sub_el(self):
+        return self._sub_el
+
+    @sub_el.setter
+    def sub_el(self, value):
+        self._sub_el = value and self.elastic['par'] is not None
+
+    @property
+    def mask_el(self):
+        return self._mask_el
+
+    @mask_el.setter
+    def mask_el(self, value):
+        self._mask_el = value and self.elastic['par'] is not None
+
+    def _nxspe_array_update(self):
+        cut = mc.Cut(self.raw['workspace'], CutAxis=self.y_ind, IntegrationAxis=self.x_ind)
+        self.array = np.array([list(cut.get_coordinates().items())[0][1], cut.get_signal(), cut.get_error()])
+
 
 class DataCollection:
 
@@ -141,6 +254,12 @@ class DataCollection:
         return self._datavec[ind] if isinstance(ind, int) else self._datavec[self._keys[ind]]
 
     def __setitem__(self, ind, val):
+        if isinstance(val, str):
+            val = Dataset.from_file(val)
+        elif isinstance(val, tuple):
+            val = Dataset(*val)
+        elif not isinstance(val, Dataset):
+            raise RuntimeError('DataCollection elements must be a file name, dataset values or Dataset object')
         self._keys[ind] = len(self._datavec)
         self._datavec.append(val)
 
