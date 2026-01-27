@@ -121,10 +121,10 @@ class Fit():
             x, y = (getattr(self.data[self._current_data], col) for col in ['x', 'y'])
             if cc.shape[0] > 2:
                 fwhm = np.abs(cc[1,0] - cc[2,0])
-                p0 = [cc[0,0], cc[1,0] * fwhm / 2, fwhm]
+                p0 = [cc[0,0], cc[0,1] * fwhm, fwhm, 0.5]
             else:
                 p0 = get_pk_init(x, y, cc[0,:], voigt)
-            self.data[self._current_data].elastic['guess'] = np.array(p0 + [0.01, np.nanmin(x)])
+            self.data[self._current_data].elastic['guess'] = np.array(p0 + [1e-12, np.nanmin(y)])
 
     def set_current_data_property(self, prop, val):
         setattr(self.data[self._current_data], prop, val)
@@ -132,17 +132,18 @@ class Fit():
     def fit_current_data_peaks(self, peakfun=voigt):
         data, widths = (self.data[self._current_data], self.data[self._current_data].peaks['widths'])
         x, y, e = (getattr(data, col) for col in ['x', 'y', 'e'])
-        p0 = np.hstack([get_pk_init(x, y, cc, peakfun, wd) for cc, wd in zip(data.peaks['guess'], widths)] + [0.01, np.nanmin(x)])
+        p0 = np.hstack([get_pk_init(x, y, cc, peakfun, wd) for cc, wd in zip(data.peaks['guess'], widths)] + [1e-12, np.nanmin(x)])
         popt, pcov = curvefit(lambda xx, *pp: specfun(xx, *pp, peakfun=peakfun), x, y, p0, e if len(e) > 0 else None)
         self.data[self._current_data].peaks['par'] = popt
         self.data[self._current_data].peaks['trace'] = specfun(x, *popt, peakfun=peakfun)
 
     def fit_current_data_elastic(self):
         x, y, e = (getattr(self.data[self._current_data], col) for col in ['x', 'y', 'e'])
-        y0 = np.nanmax(y[np.where(np.abs(x) < np.nanmax(x)/20)])
-        p0 = self.data[self._current_data].peaks['guess']
+        p0 = self.data[self._current_data].elastic['guess']
         if p0 is None:
-            p0 = get_pk_init(x, y, [0, y0], voigt) + [0.01, np.nanmin(x)]
+            y0 = np.nanmax(y[np.where(np.abs(x) < np.nanmax(x)/10)])
+            x0 = x[np.where(y == y0)[0][0]]
+            p0 = get_pk_init(x, y, [x0, y0], voigt) + [1e-12, np.nanmin(y)]
         popt, pcov = curvefit(lambda xx, *pp: specfun(xx, *pp, peakfun=voigt), x, y, p0, e if len(e) > 0 else None)
         self.data[self._current_data].elastic['par'] = popt
         self.data[self._current_data].elastic['trace'] = specfun(x, *popt, peakfun=voigt)

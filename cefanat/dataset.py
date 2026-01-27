@@ -83,9 +83,11 @@ class Dataset:
                 sl = mc.Slice(rawdic['workspace'])
                 rawdic.update(**{k:sl.get_coordinates()[v] for k, v in zip(['Q', 'E'], ['q', 'Energy transfer'])})
                 rawdic['S'] = sl.get_signal()
-                erng, qrng = (f'{qe},'+','.join([str(c) for c in rawdic['workspace'].limits[qe]]) for qe in ['DeltaE', '|Q|'])
+                erng = 'DeltaE,' + ','.join([f'{c:.3f}' for c in rawdic['workspace'].limits['DeltaE']])
+                qrng = '|Q|,' + ','.join([f'{c * f:.3f}' for c, f in zip(rawdic['workspace'].limits['|Q|'], [1, 0.5, 1])])
                 cut = mc.Cut(rawdic['workspace'], CutAxis=erng, IntegrationAxis=qrng)
                 dat = np.array([list(cut.get_coordinates().items())[0][1], cut.get_signal(), cut.get_error()])
+                dat = dat[:, np.where(dat[2,:] != 0)[0]]
                 return cls(dat, rawdic, name, intype='nxspe', x_ind=qrng, y_ind=erng, e_ind='e')
 
     @property
@@ -238,6 +240,8 @@ class Dataset:
     def _nxspe_array_update(self):
         cut = mc.Cut(self.raw['workspace'], CutAxis=self.y_ind, IntegrationAxis=self.x_ind)
         self.array = np.array([list(cut.get_coordinates().items())[0][1], cut.get_signal(), cut.get_error()])
+        self.array = self.array[:, np.where(self.array[2,:] != 0)[0]]
+        self.peaks['trace'], self.elastic['trace'] = (None, None)
 
 
 class DataCollection:

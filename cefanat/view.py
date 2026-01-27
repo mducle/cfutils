@@ -336,13 +336,13 @@ class CEFAnaTView(QWidget):
         return rv
 
     def set_nxspe_data(self, arrdat, nxspedic, xyeind):
-        [getattr(self, f'nxspe{qe}range').setText(xyeind[ii]) for ii, qe in enumerate(['Q', 'E'])]
+        [getattr(self, f'nxspe{qe}').setText(xyeind[ii]) for ii, qe in enumerate(['Q', 'E'])]
         self.nxspefig.clear()
         ax = self.nxspefig.add_subplot(111)
         ax.set_xlabel(r'|Q| ($\mathrm{\AA}^{-1}$)')
         ax.set_ylabel(r'Energy transfer (meV)')
         mesh = ax.pcolormesh(nxspedic['Q'], nxspedic['E'], nxspedic['S'].T, shading='nearest')
-        mesh.set_clim(vmin=0, vmax=np.max(nxspedic['S'])/50)
+        mesh.set_clim(vmin=0, vmax=np.nanmax(nxspedic['S'])/100)
         self.nxspefig.colorbar(mesh)
         self.nxspecanvas.draw()
 
@@ -400,6 +400,10 @@ class CEFAnaTView(QWidget):
             self.dataaxes.plot(data.x, data.peaks['trace'], '-k')
         if data.elastic['trace'] is not None and not (data.sub_el or data.mask_el):
             self.dataaxes.plot(data.x, data.elastic['trace'], '--k')
+        if data.elastic['guess'] is not None:
+            cen, area, fw = tuple(data.elastic['guess'][:3])
+            self.dataaxes.plot(cen, area / fw, '^r', markersize=10)
+            self.dataaxes.plot([cen-fw/2, cen+fw/2], [area / 2 / fw]*2, '--r')
         self.dataaxes.set_xlabel(data.xlabel)
         self.dataaxes.set_ylabel(data.ylabel)
         self.datacanvas.draw()
