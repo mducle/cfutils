@@ -153,3 +153,19 @@ class Fit():
 
     def current_data_toggle_mask(self):
         self.data[self._current_data].mask_el = not self.data[self._current_data].mask_el
+
+    def get_current_data_subtractable(self):
+        return self.data.get_subtractable(self._current_data)
+
+    def subtract_current_data(self, to_subtract):
+        return self.data.subtract_and_append(self._current_data, *to_subtract)
+
+    def is_current_subtractable(self):
+        return self.data.is_subtractable(self._current_data)
+
+    def delete_current_data(self):
+        curr_ind = self.data.get_index(self._current_data)
+        new_data = self.data.get_name(curr_ind - 1)
+        del self.data[self._current_data]
+        self._current_data = new_data
+        return curr_ind

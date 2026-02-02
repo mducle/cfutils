@@ -44,6 +44,45 @@ class Dataset:
         self.sub_el = False
         self.mask_el = False
 
+    def _newnxspe(self, ws, name):
+        rawdic = {'filename':'<inmemory>', 'workspace':ws, 'Q':self.raw['Q'], 'E':self.raw['E'], 'S':mc.Slice(ws).get_signal()}
+        cut = mc.Cut(ws, CutAxis=self.y_ind, IntegrationAxis=self.x_ind)
+        dat = np.array([list(cut.get_coordinates().items())[0][1], cut.get_signal(), cut.get_error()])
+        dat = dat[:, np.where(dat[2,:] != 0)[0]]
+        return Dataset(dat, rawdic, name, intype='nxspe', x_ind=self.x_ind, y_ind=self.y_ind, e_ind='e')
+
+    def __sub__(self, rhs):
+        if not isinstance(rhs, Dataset):
+            raise RuntimeError('Can only subtract another Dataset object')
+        if not self.is_compatible(rhs):
+            raise RuntimeError('RHS object not compatible')
+        if self.inputtype == 'nxspe':
+            ws = self.raw['workspace'] - rhs.raw['workspace']
+            rv = self._newnxspe(ws, self.name + '_sub')
+        else:
+            sub = np.array([self.x, self.y - rhs.y, np.sqrt(self.e**2 + rhs.e**2)])
+            rv = Dataset(sub, np.array2string(sub), self.name+'_sub', intype='text')
+        return rv
+
+    def __mul__(self, rhs):
+        if isinstance(rhs, (int, float)):
+            if self.inputtype == 'nxspe':
+                ws = self.raw['workspace'] * rhs
+                rv = self._newnxspe(ws, self.name + '_sub')
+            else:
+                sub = np.array([self.x, self.y * rhs, self.e * rhs])
+                rv = Dataset(sub, np.array2string(sub), self.name+'_sub', intype='text')
+            return rv
+        else:
+            raise RuntimeError('Only scalar multiplication of datasets supported')
+
+    def __rmul__(self, lhs):
+        return self.__mul__(lhs)
+
+    def is_compatible(self, rhs):
+        return isinstance(rhs, Dataset) and rhs.inputtype == self.inputtype and len(rhs.x) == len(self.x) \
+                and rhs != self and np.sum(np.abs(rhs.x - self.x)) < 1e-5
+
     @classmethod
     def from_file(cls, filename):
         extras = {}
@@ -249,6 +288,7 @@ class DataCollection:
     def __init__(self):
         self._keys = {}
         self._datavec = []
+        self._subtractable = np.array([[0],])
 
     @property
     def nset(self):
@@ -264,8 +304,27 @@ class DataCollection:
             val = Dataset(*val)
         elif not isinstance(val, Dataset):
             raise RuntimeError('DataCollection elements must be a file name, dataset values or Dataset object')
-        self._keys[ind] = len(self._datavec)
-        self._datavec.append(val)
+        if isinstance(ind, int):
+            if ind > len(self._datavec):
+                raise IndexError(f'Index {ind} exceeds collection size {len(self._datavec)}')
+            elif ind == len(self._datavec):
+                if val.name in self._keys:
+                    raise IndexError(f'Dataset name "{val.name}" same as another dataset already in the collection')
+                self._datavec.append(val)
+            else:
+                self._datavec[ind] = val
+                self._keys[[k for k, v in self._keys.items() if v == ind][0]].pop()
+            self._keys[val.name] = ind
+            self._updatesubtractable(ind)
+        elif isinstance(ind, str):
+            if ind not in self._keys:
+                self._keys[ind] = len(self._datavec)
+                self._datavec.append(val)
+            else:
+                self._datavec[self._keys[ind]] = val
+            self._updatesubtractable(self._keys[ind])
+        else:
+            raise IndexError('Index must be an integer or string dataset name')
 
     def __len__(self):
         return len(self._datavec)
@@ -273,8 +332,48 @@ class DataCollection:
     def __iter__(self):
         return iter(self._keys)
 
+    def __delitem__(self, ind):
+        if isinstance(ind, int):
+            ky = list(self._keys.keys())[ind]
+        else:
+            ky, ind = (ind, self._keys[ind])
+        del self._keys[ky]
+        del self._datavec[ind]
+        self._subtractable = np.delete(self._subtractable, ind, axis=0)
+        self._subtractable = np.delete(self._subtractable, ind, axis=1)
+
     def max_x(self):
         return np.max([np.max(d.x) for d in self._datavec if d.datatype == 'INS'])
+
+    def get_index(self, name):
+        return self._keys[name]
+
+    def get_name(self, ind):
+        return self._datavec[ind].name
+
+    def _updatesubtractable(self, ind):
+        curdat = self._datavec[ind]
+        newrow = np.array([curdat.is_compatible(d) for d in self._datavec]).reshape((1, len(self._datavec)))
+        if ind > 0 and ind >= self._subtractable.shape[0]:
+            self._subtractable = np.hstack((self._subtractable, newrow[:,:-1].T))
+            self._subtractable = np.vstack((self._subtractable, newrow))
+        else:
+            self._subtractable[ind,:] = newrow
+
+    def get_subtractable(self, ind):
+        ind = ind if isinstance(ind, int) else self._keys[ind]
+        return [self._datavec[ii].name for ii in self._subtractable[ind,:]]
+
+    def is_subtractable(self, ind):
+        return any(self.get_subtractable(ind))
+
+    def subtract_and_append(self, lhs, rhs, ssf=1.0):
+        if isinstance(lhs, str): lhs = self._datavec[self._keys[lhs]]
+        if isinstance(rhs, str): rhs = self._datavec[self._keys[rhs]]
+        rv = lhs - ssf * rhs
+        self[rv.name] = rv
+        return rv.name
+
 
 """
     def get_data_from_workspace(self, InputWorkspace):

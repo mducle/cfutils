@@ -12,7 +12,7 @@ from qtpy.QtWidgets import (QAction, QCheckBox, QComboBox, QDialog, QFileDialog,
                             QLineEdit, QMainWindow, QMessageBox, QPushButton, QSizePolicy, QSpacerItem, QTabWidget,
                             QGroupBox, QRadioButton, QStackedWidget, QTextEdit, QVBoxLayout, QListWidget, QWidget,
                             QTableWidget, QTableWidgetItem, QActionGroup, QStatusBar, QTreeWidget, QTreeWidgetItem,
-                            QToolButton)  # noqa
+                            QToolButton, QDoubleSpinBox, QDialogButtonBox)  # noqa
 from matplotlib.figure import Figure
 from matplotlib.backend_bases import MouseButton
 
@@ -41,7 +41,7 @@ except ImportError:
         getattr(legend, SET_DRAGGABLE_METHOD)(state, use_blit, update)
 
 
-def create_vertical_inputs(parent, spec):
+def create_vertical_inputs(parent, spec, widget=None):
     layout = QVBoxLayout()
     for inp in spec:
         if not isinstance(inp[0], str):
@@ -66,7 +66,8 @@ def create_vertical_inputs(parent, spec):
             raise RuntimeError(f'Input item type "{inp[0]}" not recognised')
         setattr(parent, inp[-1], inpwidget)
         layout.addWidget(inpwidget)
-    widget = QWidget(parent)
+    if widget is None:
+        widget = QWidget(parent)
     layout.setAlignment(Qt.AlignTop)
     widget.setLayout(layout)
     return widget
@@ -215,6 +216,23 @@ class DropdownButton(QToolButton):
         self._children[idx][0].setText(value)
         if idx == self._current:
             self.setText(value)
+
+
+class SubtractDialog(QDialog):
+    def __init__(self, subtractables, parent=None):
+        super(QDialog, self).__init__(parent)
+        create_vertical_inputs(self, [
+            ['pair', 'RHS data', QListWidget, 'rhsdatalist'],
+            ['pair', 'Self shielding factor', QDoubleSpinBox, 'ssf'],
+            ['single', (QDialogButtonBox.Ok|QDialogButtonBox.Cancel, self), QDialogButtonBox, 'buttons']],
+            self)
+        for itm in subtractables:
+            self.rhsdatalist.addItem(itm)
+        [getattr(self.ssf, p)(v) for p, v in zip(['setMinimum', 'setSingleStep', 'setValue'], [0, 0.1, 1])]
+        self.buttons.accepted.connect(self.accept)
+        self.buttons.rejected.connect(self.reject)
+    def return_values(self):
+        return self.rhsdatalist.currentItem().text(), self.ssf.value()
 
 
 class CEFAnaTView(QWidget):
@@ -373,12 +391,14 @@ class CEFAnaTView(QWidget):
         self.datatoolshide0.setText('Show elastic' if data.sub_el else 'Hide elastic')
         self.datatoolsmskel.setText('Unmask elastic' if data.mask_el else 'Mask elastic')
 
-    def update_data(self, data):
+    def update_data(self, data, is_subtractable):
         self.is_noninteractive = True
         self.datadispstack.setCurrentIndex(self._dataformatsdic[data.inputtype])
         getattr(self, f'set_{data.inputtype}_data')(data.array, data.raw, data.xyeind)
         self.reset_data_meta(data)
         self.toggle_toolbtns(data)
+        self.datasubbtn.setEnabled(is_subtractable)
+        self.datadelbtn.setEnabled(True)
         if data.array is not None:
             self.plot_data(data)
         self.is_noninteractive = False
@@ -408,6 +428,10 @@ class CEFAnaTView(QWidget):
         self.dataaxes.set_ylabel(data.ylabel)
         self.datacanvas.draw()
 
+    def delete_data_item(self, ind):
+        self.datalist.takeItem(ind)
+        self.datalist.setCurrentRow(ind - 1)
+
     def update_data_list(self, name):
         if name in [self.datalist.item(ii).text() for ii in range(self.datalist.count())]:
             txtmsg = 'Name previously used. Click "Yes" to overwrite. Click "No" to rename. Click "Cancel" to not load'
@@ -426,6 +450,12 @@ class CEFAnaTView(QWidget):
 
     def set_current_data(self, index):
         self.datalist.setCurrentRow(index)
+
+    def subtract_data(self, sublist):
+        subdlg = SubtractDialog(sublist, self)
+        if subdlg.exec_():
+            return subdlg.return_values()
+        return None
 
     def guess_peaks(self, elastic=False):
         if elastic:
@@ -499,6 +529,8 @@ class CEFAnaTView(QWidget):
 
     def drawdatatab(self):
         self.dataloadbtn = QPushButton("Load Data", self)
+        self.datasubbtn = QPushButton("Subtract Data", self, enabled=False)
+        self.datadelbtn = QPushButton("Remove Data", self, enabled=False)
         self.datalist = QListWidget(self.datatab)
         self.datafig = Figure()
         self.datadisplay = QTabWidget(self)
@@ -568,6 +600,8 @@ class CEFAnaTView(QWidget):
         datalayoutc1, datalayoutc2 = (QVBoxLayout() for _ in range(2))
         datac1, datac2 = (QWidget() for _ in range(2))
         datalayoutc1.addWidget(self.dataloadbtn)
+        datalayoutc1.addWidget(self.datasubbtn)
+        datalayoutc1.addWidget(self.datadelbtn)
         datalayoutc1.addWidget(self.datalist)
         datac1.setLayout(datalayoutc1)
         datalayoutc2.addWidget(datatools1)

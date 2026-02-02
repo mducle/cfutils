@@ -45,6 +45,8 @@ class CEFAnaTPresenter():
         # Make McPhase the default engine if it is found
         self.calc_engine = 'McPhaseEngine' if 'McPhaseEngine' in self.engines else self.engines[0]
         self.view.connect('dataloadbtn', 'clicked', self.on_load_data)
+        self.view.connect('datasubbtn', 'clicked', self.on_subtract_data)
+        self.view.connect('datadelbtn', 'clicked', self.on_delete_data)
         self.view.connect('datalist', 'currentItemChanged', self.on_change_data)
         self.view.connect('datalist', 'comboChanged', self.on_data_col_changed)
         self.view.connect('datatype', 'changed', self.on_data_type_changed)
@@ -81,9 +83,19 @@ class CEFAnaTPresenter():
                 self.view.set_current_data(len(self.fit.data) - 1)
 
     @display_error
+    def on_subtract_data(self, ischecked):
+        if (sub_data := self.view.subtract_data(self.fit.get_current_data_subtractable())) is not None:
+            self.view.update_data_list(self.fit.subtract_current_data(sub_data))
+            self.view.set_current_data(len(self.fit.data) - 1)
+
+    @display_error
+    def on_delete_data(self, ischecked):
+        self.view.delete_data_item(self.fit.delete_current_data())
+
+    @display_error
     def on_change_data(self, current, previous):
         self.fit.set_current_data(current)
-        self.view.update_data(self.fit.get_current_data())
+        self.view.update_data(self.fit.get_current_data(), self.fit.is_current_subtractable())
 
     @display_error
     def on_data_col_changed(self, d_ind, value):
